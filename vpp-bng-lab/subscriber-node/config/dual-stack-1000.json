@@ -1,0 +1,56 @@
+{
+  "interfaces": {
+    "access": [
+      {
+        "interface": "eth0",
+        "type": "ipoe",
+        "vlan-mode": "N:1",
+        "outer-vlan": 101
+      },
+      {
+        "interface": "eth1",
+        "type": "ipoe",
+        "vlan-mode": "N:1",
+        "outer-vlan": 102
+      },
+      {
+        "interface": "eth2",
+        "type": "ipoe",
+        "vlan-mode": "N:1",
+        "outer-vlan": 103
+      },
+      {
+        "interface": "eth3",
+        "type": "ipoe",
+        "vlan-mode": "N:1",
+        "outer-vlan": 104
+      }
+    ]
+  },
+  "sessions": {
+    "count": 1000,
+    "max-outstanding": 200,
+    "start-rate": 200,
+    "stop-rate": 200
+  },
+  "access-line": {
+    "rate-up": 1024,
+    "rate-down": 16384,
+    "dsl-type": 5
+  },
+  "dhcp": {
+    "enable": true,
+    "timeout": 5,
+    "retry": 255,
+    "release-interval": 2,
+    "release-retry": 3
+  },
+  "dhcpv6": {
+    "enable": true,
+    "ldra": true
+  },
+  "ipoe": {
+    "ipv4": true,
+    "ipv6": true
+  }
+}

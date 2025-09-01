@@ -1,0 +1,47 @@
+# =========================================================================
+# VPP BNG Lab - Docker Compose File (WSL 2 Compatible)
+# =========================================================================
+services:
+  # The BNG service, running VPP and Kea DHCP servers.
+  bng:
+    build:
+      context: ./bng-node
+    container_name: vpp-bng-node
+    privileged: true
+    # Connect the BNG to all 4 access networks.
+    networks:
+      - access_net_101
+      - access_net_102
+      - access_net_103
+      - access_net_104
+    volumes:
+      - ./bng-node/config/startup.conf:/etc/vpp/startup.conf:ro
+      - ./bng-node/config/kea-dhcp4.conf:/etc/kea/kea-dhcp4.conf:ro
+      - ./bng-node/config/kea-dhcp6.conf:/etc/kea/kea-dhcp6.conf:ro
+
+  # The Subscriber Simulator service, running BNG Blaster.
+  subscribers:
+    build:
+      context: ./subscriber-node
+    container_name: bng-subscriber-node
+    privileged: true
+    command: tail -f /dev/null
+    # Connect the subscriber simulator to all 4 access networks.
+    networks:
+      - access_net_101
+      - access_net_102
+      - access_net_103
+      - access_net_104
+    volumes:
+      - ./subscriber-node/config:/config:ro
+
+# Define the 4 parallel bridge networks.
+networks:
+  access_net_101:
+    driver: bridge
+  access_net_102:
+    driver: bridge
+  access_net_103:
+    driver: bridge
+  access_net_104:
+    driver: bridge

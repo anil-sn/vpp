@@ -1,0 +1,53 @@
+#
+# VPP Configuration for the 'bng' node
+# Role: Connects to r1 and r2, and provides a client-side interface.
+#
+
+# --- Link to r1 (memif-a) ---
+# Create the socket file on the shared volume. VPP will listen on this socket.
+create memif socket id 0 /sockets/memif-a.sock
+
+# Create a memif interface in master mode using the socket.
+create interface memif id 0 socket-id 0 master
+
+# Create a tap interface that will be visible to the Linux kernel.
+# This is the glue between VPP and FRR.
+create tap id 0 host-if-name tap-bng-r1
+
+# Bridge the memif and tap interfaces together at L2.
+# Any packet coming in memif0 goes out tap0, and vice-versa.
+set interface l2 bridge memif0 0
+set interface l2 bridge tap0 0
+
+# Bring the interfaces up.
+set interface state memif0 up
+set interface state tap0 up
+
+
+# --- Link to r2 (memif-c) ---
+# Create the second socket file.
+create memif socket id 1 /sockets/memif-c.sock
+
+# Create a second memif interface in master mode.
+create interface memif id 1 socket-id 1 master
+
+# Create a second tap interface for the link to r2.
+create tap id 1 host-if-name tap-bng-r2
+
+# Bridge the second pair of interfaces.
+set interface l2 bridge memif1 1
+set interface l2 bridge tap1 1
+
+# Bring the interfaces up.
+set interface state memif1 up
+set interface state tap1 up
+
+
+# --- Link to Clients (BNG Blaster) ---
+# Create a dedicated tap interface for client-side traffic.
+# BNG Blaster will send traffic into the kernel, which will be routed
+# to this tap interface, injecting it into VPP.
+create tap id 2 host-if-name tap-clients
+
+# Bring the interface up.
+set interface state tap2 up

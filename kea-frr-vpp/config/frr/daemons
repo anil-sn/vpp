@@ -1,0 +1,20 @@
+# This file tells FRR which daemons to launch.
+# The actual routing configuration is in the role-specific .conf files.
+#
+bgpd=no
+ospfd=yes
+ospf6d=yes
+ripd=no
+ripngd=no
+isisd=no
+pimd=no
+ldpd=no
+nhrpd=no
+eigrpd=no
+babeld=no
+sharpd=no
+staticd=yes
+pbrd=no
+bfdd=no
+fabricd=no
+vrrpd=no

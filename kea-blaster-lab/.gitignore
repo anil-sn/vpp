@@ -1,0 +1,44 @@
+# =========================================================================
+# Standard .gitignore for a C/C++ CMake project
+# =========================================================================
+
+# --- Build Artifacts ---
+# Exclude the entire build directory, which is standard for out-of-source builds.
+/build/
+build
+
+# General build output files that might appear in other locations
+*.o
+*.so
+*.a
+*.exe
+*.dll
+
+# --- IDE and Editor Specific Files ---
+# Visual Studio Code
+.vscode/
+
+# CLion
+.idea/
+
+# Vim
+*.swp
+*.swo
+
+# --- System/OS Specific Files ---
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# --- Lab Environment Runtime Data ---
+# Exclude the directory intended as a mount point for Kea's runtime data.
+# This ensures that lease files, logs, etc., are never committed.
+lab/data/
+/var/
+
+# --- Other ---
+# Exclude any temporary or output files generated during testing or debugging.
+output.txt
+*.log

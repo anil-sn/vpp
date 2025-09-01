@@ -1,0 +1,175 @@
+#!/usr/bin/python3
+
+# Copyright (C) 2017-2025 Internet Systems Consortium, Inc. ("ISC")
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+"""
+Text client for Kea servers over HTTP/HTTPS.
+"""
+
+# First, let's import the right kea_connector.
+# Only the python 3.x is supported.
+# Sadly, there's no unified way to handle http connections. The recommended
+# way is to use Requests (http://docs.python-requests.org/en/master/), but
+# that's a standalone package that requires separate installation. One of
+# the design requirements was to not require any additional packages, so
+# the code uses standard libraries available in python. Hence, two versions.
+import argparse
+import signal
+import sys
+from base64 import b64encode
+
+sys.path.append('/usr/lib/python3/dist-packages/kea')
+
+import kea_connector3 as kea_connector
+from kea_conn import CARequest  # CAResponse
+
+
+VERSION = "3.0.0"
+EXTENDED_VERSION = "3.0.0 (isc20250717111736 deb)"
+
+
+def timeout_handler(signum, frame):
+    """Connection timeout handler"""
+    del signum, frame
+    print("Connection timeout")
+    sys.exit(1)
+
+
+def shell_body():
+    """
+    Second step: Need to parse command line parameters. We will use
+    argparse for that purpose. It does great job with having default
+    values, taking care of the help and sanity checking input
+    parameters.
+    """
+    parser = argparse.ArgumentParser(description='kea-shell is a simple text '
+                                     'client that uses REST interface to '
+                                     'connect to Kea servers over HTTP/HTTPS.')
+    parser.add_argument('--host', type=str, default='127.0.0.1',
+                        help='hostname of the CA to connect to '
+                        '(default:; 127.0.0.1)')
+    parser.add_argument('--port', type=int, default=8000,
+                        help='TCP port of the CA to connect to '
+                        '(default: 8000)')
+    parser.add_argument('--path', type=str, default='',
+                        help='Path of the URL to connect to '
+                        '(default: "")')
+    parser.add_argument('--ca', type=str, default='',
+                        help='File or directory name of the CA '
+                        '(default: "" i.e. do not use HTTPS)')
+    parser.add_argument('--cert', type=str, default='',
+                        help='File name of the client certificate '
+                        '(default: "")')
+    parser.add_argument('--key', type=str, default='',
+                        help='File name of the client private key '
+                        '(default: "")')
+    parser.add_argument('--timeout', type=int, default='10',
+                        help='Timeout (in seconds) when attempting to '
+                        'connect to CA (default: 10)')
+    parser.add_argument('--service', nargs="?", action="append",
+                        help='target specified service. If not specified,'
+                        'the destination itself will receive command.')
+    parser.add_argument('--auth-user', type=str, default='',
+                        help='Basic HTTP authentication user')
+    parser.add_argument('--auth-password', type=str, default='',
+                        help='Basic HTTP authentication password. If used '
+                             'together with "--auth-password-file", '
+                             'it is disregarded.')
+    parser.add_argument('--auth-password-file', type=str, default='',
+                        help='A text file whose first line contains the password '
+                             'to be used for basic HTTP authentication. This flag '
+                             'takes precedence over "--auth-password" flag.')
+    parser.add_argument('command', type=str, nargs="?",
+                        default='list-commands',
+                        help='command to be executed. If not specified, '
+                        '"list-commands" is used')
+    parser.add_argument('-v', action="store_true", help="Prints version")
+    parser.add_argument('-V', action="store_true", help="Prints extended version")
+    cmd_args = parser.parse_args()
+
+    if cmd_args.v:
+        print(VERSION)
+        sys.exit(0)
+
+    if cmd_args.V:
+        print(EXTENDED_VERSION)
+        sys.exit(0)
+
+    # Ok, now it's time to put the parameters parsed into the structure to be
+    # used by the connection.
+    params = CARequest()
+    params.command = cmd_args.command
+    params.service = cmd_args.service
+    params.http_host = cmd_args.host
+    params.http_port = cmd_args.port
+    params.path += cmd_args.path
+    if cmd_args.ca:
+        params.ca = cmd_args.ca
+        params.scheme = 'https'
+    if (cmd_args.cert != '' and cmd_args.key == '') or \
+       (cmd_args.cert == '' and cmd_args.key != ''):
+        print("--cert and --key must be used together")
+        sys.exit(1)
+    if cmd_args.cert:
+        if cmd_args.ca == '':
+            print("--cert and --key with HTTPS disabled (no --ca)")
+            sys.exit(1)
+        params.cert = cmd_args.cert
+    if cmd_args.key:
+        # HTTPS check already done for the cert
+        params.key = cmd_args.key
+    if cmd_args.auth_user != '':
+        user = cmd_args.auth_user
+        if cmd_args.auth_password_file != '':
+            try:
+                file = open(cmd_args.auth_password_file, 'r')
+                password = file.readline()
+                file.close()
+            except Exception as exc:
+                print("Failed to run: " + str(exc))
+                sys.exit(1)
+        else:
+            password = cmd_args.auth_password
+        secret = b':'.join((user.encode('utf-8'), password.encode('utf-8')))
+        params.auth = b64encode(secret).strip().decode('ascii')
+    params.timeout = cmd_args.timeout
+    params.version = VERSION
+
+    # Load command processor
+    # @todo - command specific processing will be added as part of
+    # future work (either #5138 or #5139, whichever is implemented
+    # first)
+
+    # Read arguments from stdin only if data is being piped in.
+    # This prevents the script from hanging when run interactively.
+    if not sys.stdin.isatty():
+        for line in sys.stdin:
+            params.args += line
+
+    # Now we have the arguments so we can build the request
+    params.generate_body()
+    params.generate_headers()
+
+    # Set the timeout timer. If the connection takes too long,
+    # it will send a signal to us.
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(params.timeout)
+
+    # Ok, everything is ready. Let's send the command and get a response.
+    try:
+        resp = kea_connector.send_to_kea(params)
+    except Exception as exc:
+        print("Failed to run: " + str(exc))
+        sys.exit(1)
+
+    resp.print_response()
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    shell_body()

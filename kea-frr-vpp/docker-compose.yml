@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  bng:
+    build: .
+    image: netlab-triangle:latest
+    container_name: bng
+    hostname: bng
+    privileged: true
+    tty: true
+    environment:
+      - ROLE=bng
+    volumes:
+      # Mount the SINGLE shared volume for all memif sockets
+      - memif-sockets:/sockets
+      # Mount all config directories (read-only is safer)
+      - ./vpp_configs:/vpp_configs:ro
+      - ./frr_configs:/frr_configs:ro
+      - ./kea_configs:/kea_configs:ro
+      # For VPP kernel modules
+      - /lib/modules:/lib/modules:ro
+
+  r1:
+    image: netlab-triangle:latest
+    container_name: r1
+    hostname: r1
+    privileged: true
+    tty: true
+    depends_on:
+      - bng
+    environment:
+      - ROLE=r1
+    volumes:
+      # Mount the SINGLE shared volume for all memif sockets
+      - memif-sockets:/sockets
+      # Mount all config directories
+      - ./vpp_configs:/vpp_configs:ro
+      - ./frr_configs:/frr_configs:ro
+      - ./kea_configs:/kea_configs:ro
+      # For VPP kernel modules
+      - /lib/modules:/lib/modules:ro
+
+  r2:
+    image: netlab-triangle:latest
+    container_name: r2
+    hostname: r2
+    privileged: true
+    tty: true
+    depends_on:
+      - bng
+      - r1
+    environment:
+      - ROLE=r2
+    volumes:
+      # Mount the SINGLE shared volume for all memif sockets
+      - memif-sockets:/sockets
+      # Mount all config directories
+      - ./vpp_configs:/vpp_configs:ro
+      - ./frr_configs:/frr_configs:ro
+      - ./kea_configs:/kea_configs:ro
+      # For VPP kernel modules
+      - /lib/modules:/lib/modules:ro
+
+volumes:
+  # Define the SINGLE named volume for all memif sockets
+  memif-sockets:

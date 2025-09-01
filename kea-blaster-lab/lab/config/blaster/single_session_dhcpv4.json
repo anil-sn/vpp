@@ -1,0 +1,41 @@
+{
+  "interfaces": {
+    "access": [
+      {
+        "interface": "cli-eth1",
+        "type": "ipoe",
+        "vlan-mode": "N:1",
+        "outer-vlan": 101
+      },
+      {
+        "interface": "cli-eth2",
+        "type": "ipoe",
+        "vlan-mode": "N:1",
+        "outer-vlan": 102
+      },
+      {
+        "interface": "cli-eth3",
+        "type": "ipoe",
+        "vlan-mode": "N:1",
+        "outer-vlan": 103
+      },
+      {
+        "interface": "cli-eth4",
+        "type": "ipoe",
+        "vlan-mode": "N:1",
+        "outer-vlan": 104
+      }
+    ],
+    "capture-include-streams": true
+  },
+  "sessions": {
+    "count": 1
+  },
+  "dhcp": {
+    "enable": true,
+    "timeout": 10
+  },
+  "dhcpv6": {
+    "enable": false
+  }
+}

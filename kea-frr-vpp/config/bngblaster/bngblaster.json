@@ -1,0 +1,19 @@
+{
+    "comment": "This is a sample configuration. It needs to be adapted for the specific test case.",
+    "interfaces": {
+        "access": "tap-clients",
+        "network": "not-used-in-this-setup"
+    },
+    "sessions": {
+        "count": 1,
+        "type": "ipoe",
+        "ip-protocol": "ipv4",
+        "rate": 10
+    },
+    "dhcp": {
+        "timeout": 10
+    },
+    "report": {
+        "file": "/tmp/bngblaster-run.json"
+    }
+}

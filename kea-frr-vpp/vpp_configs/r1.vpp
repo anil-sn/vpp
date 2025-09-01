@@ -1,0 +1,42 @@
+#
+# VPP Configuration for the 'r1' node
+# Role: Connects downstream to 'bng' and upstream to 'r2'.
+#
+
+# --- Link to bng (memif-a) ---
+# Define the socket file this interface will use.
+create memif socket id 0 /sockets/memif-a.sock
+
+# Create a memif interface in SLAVE mode. It will connect to the socket
+# created by the master ('bng' node).
+create interface memif id 0 socket-id 0 slave
+
+# Create the corresponding tap interface for the Linux kernel (FRR).
+create tap id 0 host-if-name tap-r1-bng
+
+# Bridge the memif and tap interfaces together at L2.
+set interface l2 bridge memif0 0
+set interface l2 bridge tap0 0
+
+# Bring the interfaces up.
+set interface state memif0 up
+set interface state tap0 up
+
+
+# --- Link to r2 (memif-b) ---
+# Create the socket file for the link to r2. On this link, r1 is the MASTER.
+create memif socket id 1 /sockets/memif-b.sock
+
+# Create a memif interface in MASTER mode.
+create interface memif id 1 socket-id 1 master
+
+# Create the second tap interface.
+create tap id 1 host-if-name tap-r1-r2
+
+# Bridge the second pair of interfaces.
+set interface l2 bridge memif1 1
+set interface l2 bridge tap1 1
+
+# Bring the interfaces up.
+set interface state memif1 up
+set interface state tap1 up

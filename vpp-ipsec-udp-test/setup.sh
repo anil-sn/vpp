@@ -25,8 +25,8 @@ sudo ip link set br0 up
 # own network stacks and interact with VPP.
 # We mount the respective startup.conf file into each container.
 echo "--- Creating Docker containers (AWS & GCP)... ---"
-docker run -d --name AWS --privileged -v "$(pwd)/aws-startup.conf:/etc/vpp/startup.conf" -it vpp-iperf:latest
-docker run -d --name GCP --privileged -v "$(pwd)/gcp-startup.conf:/etc/vpp/startup.conf" -it vpp-iperf:latest
+docker run -d --name AWS --privileged -v /mnt/huge:/mnt/huge -v "$(pwd)/aws-startup.conf:/etc/vpp/startup.conf" -it vpp-iperf:latest
+docker run -d --name GCP --privileged -v /mnt/huge:/mnt/huge -v "$(pwd)/gcp-startup.conf:/etc/vpp/startup.conf" -it vpp-iperf:latest
 
 # --- 3. Network Plumbing for AWS ---
 echo "--- Waiting for AWS network namespace... ---"

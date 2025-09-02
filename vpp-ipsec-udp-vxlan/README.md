@@ -55,11 +55,12 @@ This project replaces the complex Linux-based forwarding engine with a single, h
 
 1.  **Prerequisites:** Docker, Python 3, and the Scapy library (`pip install scapy`).
 2.  **Build & Start:** Run `sudo bash ./run_vpp_test.sh`. This script will build the Docker image, create the networks, and start the containers.
-3.  **Send Traffic:** In a **new terminal**, run `python3 send_flows.py`.
+3.  **Host Bridge IP:** The host bridge `br0` is assigned `192.168.1.1/24` so the host can reach `aws_vpp (192.168.1.2)` and `gcp_vpp (192.168.1.3)` directly.
+4.  **Send Traffic:** In a **new terminal**, run `python3 send_flows.py`.
 4.  **Verify:**
     *   Check the NAT session on the AWS side: `sudo bash ./debug.sh aws_vpp show nat44 sessions`
     *   Trace the final decrypted packet on the GCP side:
         *   `sudo bash ./debug.sh gcp_vpp trace add af-packet-input 10`
         *   Run `python3 send_flows.py` again.
         *   `sudo bash ./debug.sh gcp_vpp show trace`
-5.  **Cleanup:** Run `sudo bash ./cleanup.sh` to stop and remove all containers and networks.
+6.  **Cleanup:** Run `sudo bash ./cleanup.sh` to stop and remove all containers and networks.

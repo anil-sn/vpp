@@ -1,0 +1,576 @@
+#!/bin/bash
+# aws-config.sh (FINAL WORKING VERSION - Simplified)
+
+set -e
+
+echo "--- Configuring AWS VPP (VXLAN -> NAT -> IPsec) ---"
+
+# --- Block 1: Interfaces and IPsec ---
+vppctl create host-interface name aws-phy
+vppctl set interface ip address host-aws-phy 192.168.1.2/24
+vppctl set interface state host-aws-phy up
+
+vppctl ipsec sa add 1000 spi 1000 esp crypto-alg aes-gcm-128 crypto-key 4a506a794f574265564551694d653768
+vppctl ipsec sa add 2000 spi 2000 esp crypto-alg aes-gcm-128 crypto-key 4a506a794f574265564551694d653768
+vppctl create ipip tunnel src 192.168.1.2 dst 192.168.1.3
+vppctl ipsec tunnel protect ipip0 sa-in 2000 sa-out 1000
+vppctl set interface ip table ipip0 0
+vppctl set interface state ipip0 up
+
+# --- Block 2: VXLAN Tunnel ---
+vppctl create vxlan tunnel src 192.168.1.2 dst 0.0.0.0 vni 100
+vppctl set interface ip table vxlan_tunnel0 0
+vppctl set interface state vxlan_tunnel0 up
+
+# --- Block 3: The Direct NAT Configuration ---
+
+# Enable the NAT44 feature globally. This is YOUR key discovery.
+vppctl nat44 plugin enable
+
+# Directly apply NAT to the VXLAN (in) and IPsec (out) interfaces.
+vppctl set interface nat44 in vxlan_tunnel0 out ipip0
+
+# Add the static mapping rule.
+vppctl nat44 add static mapping udp local 10.10.10.10 2055 external 10.0.2.1 2055
+
+# --- Block 4: Routing ---
+# This single route sends the NAT'd packet into the IPsec tunnel.
+vppctl ip route add 10.0.2.0/24 via ipip0
+
+echo "--- AWS VPP configuration applied SUCCESSFULLY. ---"# aws-startup.conf
+
+unix {
+  nodaemon
+  log /var/log/vpp/vpp.log
+  full-coredump
+  cli-listen /run/vpp/cli.sock
+  gid vpp
+}
+
+dpdk {
+  no-pci
+}
+
+plugins {
+  plugin default { enable }
+  plugin crypto_native_plugin.so { enable }
+  plugin ipsec_plugin.so { enable }
+  plugin af_packet_plugin.so { enable }
+  plugin vxlan_plugin.so { enable }
+  plugin nat_plugin.so { enable }
+}
+
+logging {
+  default-log-level debug
+}#!/bin/bash
+#
+# cleanup.sh
+#
+# This script is responsible for tearing down all components of the test environment.
+# It is designed to be idempotent, meaning it can be run multiple times without
+# causing errors if the resources it tries to delete are already gone.
+# It must be run with sudo because it modifies host network interfaces.
+
+# Exit immediately if any command fails.
+set -e
+
+echo "Cleaning up setup..."
+
+# --- Step 1: Stop and Remove Docker Containers ---
+# Use the new container names 'aws_vpp' and 'gcp_vpp'.
+echo "Stopping and removing Docker containers..."
+docker stop aws_vpp gcp_vpp || true
+docker rm aws_vpp gcp_vpp || true
+
+# --- Step 2: Remove Host-Side Network Interfaces (veth pairs) ---
+# This deletes the host-side ends of the veth pairs ('aws-br' and 'gcp-br').
+# '2>/dev/null || true' suppresses the "Cannot find device" error if the
+# interface doesn't exist.
+echo "Removing veth pairs..."
+sudo ip link delete aws-br 2>/dev/null || true
+sudo ip link delete gcp-br 2>/dev/null || true
+
+# --- Step 3: Remove Host Bridge ---
+# Deletes the Linux bridge that connected the two containers.
+echo "Removing bridge br0..."
+sudo ip link delete br0 2>/dev/null || true
+
+echo "Cleanup complete!"#!/bin/bash
+#
+# debug.sh
+#
+# This script is a flexible debugging tool to run any vppctl command inside
+# one of the running containers. It simplifies the process of inspecting
+# the VPP state.
+
+# Exit immediately if any command fails.
+set -e
+
+# The first argument is the container name, the rest are the vppctl command.
+CONTAINER=$1
+shift
+
+# Check if the user provided the necessary arguments.
+if [ -z "$CONTAINER" ] || [ -z "$1" ]; then
+  echo "Usage: $0 <container_name> <vppctl_command_with_args>"
+  echo
+  echo "Example Verifications:"
+  echo "  $0 aws_vpp show nat44 sessions"
+  echo "  $0 gcp_vpp show ipsec sa"
+  echo "  $0 aws_vpp show vxlan tunnel"
+  echo "  $0 gcp_vpp show int"
+  echo "  $0 gcp_vpp trace add af-packet-input 10"
+  echo "  $0 gcp_vpp show trace"
+  exit 1
+fi
+
+echo "--- Running 'vppctl $@' in container '$CONTAINER' ---"
+# Execute the vppctl command inside the specified container.
+docker exec "$CONTAINER" vppctl "$@"# Dockerfile
+#
+# This file defines the custom Docker image for our network nodes.
+
+# Use an official VPP base image from Ligato as the foundation.
+# This provides a pre-installed and configured VPP instance.
+FROM ligato/vpp-base:latest
+
+# Switch to the root user to perform system-level installations.
+USER root
+
+# Update the package lists and install necessary tools.
+# - python3-scapy: For the traffic generation script.
+# - net-tools: Provides useful networking utilities.
+# '--no-install-recommends' helps keep the image size smaller.
+# 'apt-get clean && rm -rf /var/lib/apt/lists/*' cleans up the package cache.
+RUN apt-get update && \
+    apt-get install -y python3-scapy net-tools --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# The base image's default user will be used when the container starts.#!/bin/bash
+# gcp-config.sh
+#
+# This script configures the VPP instance on the GCP node. It acts as a
+# standard IPsec endpoint to receive the forwarded traffic.
+
+# Exit immediately if any command fails.
+set -e
+
+echo "--- Configuring GCP ---"
+
+# --- 1. VPP -> Linux Kernel Interface (TAP) ---
+# Create a TAP interface to connect VPP to this container's Linux kernel.
+vppctl create tap id 0 host-if-name vpp-linux
+# Assign the IP address that will serve as the gateway for the Linux kernel.
+vppctl set interface ip address tap0 10.0.2.2/24
+vppctl set interface state tap0 up
+
+# --- 2. VPP -> Host/Underlay Interface (af_packet) ---
+# Create a VPP host-interface that binds to the 'gcp-phy' veth pair.
+vppctl create host-interface name gcp-phy
+# Assign the underlay IP address for the GCP side.
+vppctl set interface ip address host-gcp-phy 192.168.1.3/24
+vppctl set interface state host-gcp-phy up
+
+# --- 3. IPsec Security Association (SA) Configuration ---
+# The SA configuration is a mirror of the AWS side.
+# This SA is for INcoming traffic (AWS -> GCP). It must match AWS's OUTbound SA.
+vppctl ipsec sa add 1000 spi 1000 esp crypto-alg aes-gcm-128 crypto-key 4a506a794f574265564551694d653768
+# This SA is for OUTgoing traffic (GCP -> AWS). It must match AWS's INbound SA.
+vppctl ipsec sa add 2000 spi 2000 esp crypto-alg aes-gcm-128 crypto-key 4a506a794f574265564551694d653768
+
+# --- 4. Tunnel Interface Configuration ---
+# Create the IPIP tunnel interface with source and destination IPs swapped.
+vppctl create ipip tunnel src 192.168.1.3 dst 192.168.1.2
+# Protect the tunnel, ensuring the sa-in and sa-out values are the mirror of the AWS side.
+vppctl ipsec tunnel protect ipip0 sa-in 1000 sa-out 2000
+# Assign the tunnel to the default IP routing table.
+vppctl set interface ip table ipip0 0
+vppctl set interface state ipip0 up
+
+# --- 5. VPP Routing Logic ---
+# Route traffic for the remote AWS private network (10.0.1.0/24) INTO the tunnel.
+vppctl ip route add 10.0.1.0/24 via ipip0
+# Route decrypted traffic for the local GCP private network (10.0.2.0/24) OUT to the kernel.
+vppctl ip route add 10.0.2.0/24 via tap0
+
+# --- 6. Linux Kernel Networking Configuration ---
+# Assign an IP address to the Linux side of the TAP interface.
+ip addr add 10.0.2.1/24 dev vpp-linux
+ip link set vpp-linux up
+# Add a route in the Linux kernel to send traffic for the AWS network to VPP.
+ip route add 10.0.1.0/24 via 10.0.2.2
+
+echo "--- GCP configuration applied. ---"# gcp-startup.conf
+#
+# This file controls the startup behavior of the VPP daemon.
+# It is mounted into /etc/vpp/startup.conf inside the container.
+
+# The 'unix' stanza controls core VPP process settings.
+unix {
+  # 'nodaemon' keeps VPP running in the foreground, which is standard for containers.
+  nodaemon
+  # Specifies the log file location.
+  log /var/log/vpp/vpp.log
+  # Generates a full core dump if the process crashes, for deep debugging.
+  full-coredump
+  # This is the path to the socket that vppctl uses to communicate with VPP.
+  # Our setup and test scripts wait for this file to exist.
+  cli-listen /run/vpp/cli.sock
+  # Sets the group ownership of the VPP process for security.
+  gid vpp
+}
+
+dpdk {
+  # This is the most important setting.
+  # It tells VPP/DPDK not to scan for or touch any
+  # physical network cards.
+  no-pci
+}
+
+# The 'plugins' stanza controls which VPP plugins are loaded at startup.
+# Disabling unused plugins can save memory and reduce startup time.
+plugins {
+  # Load the default set of plugins.
+  plugin default { enable }
+
+  # --- Required Plugins for this Test ---
+  # Native cryptographic engine.
+  plugin crypto_native_plugin.so { enable }
+  # Core IPsec protocol functionality.
+  plugin ipsec_plugin.so { enable }
+  # Driver for 'host-interface', which connects VPP to the container's veth pair.
+  plugin af_packet_plugin.so { enable }
+  
+  # --- Optional but Commonly Used Plugins ---
+  plugin nat_plugin.so { enable }
+  plugin acl_plugin.so { enable }
+}#!/bin/bash
+
+# This script automates the installation of Docker Engine on an Ubuntu-based system.
+# It follows the official Docker installation guide to ensure a correct and secure setup.
+#
+# The script will:
+# 1. Update the package lists.
+# 2. Install necessary prerequisite packages.
+# 3. Add Docker's official GPG key for package verification.
+# 4. Set up the Docker APT repository.
+# 5. Install Docker Engine, CLI, containerd, and Docker Compose.
+# 6. Add the current user to the 'docker' group to run Docker commands without sudo.
+
+# Exit immediately if a command exits with a non-zero status.
+set -e
+
+# --- Script Start ---
+
+# 1. Update package lists
+# This command downloads the package information from all configured sources.
+echo "INFO: Updating package lists..."
+sudo apt update
+
+# 2. Install prerequisite packages
+# These packages are required to allow 'apt' to use a repository over HTTPS.
+echo "INFO: Installing prerequisite packages..."
+sudo apt install -y apt-transport-https ca-certificates curl software-properties-common
+
+# 3. Add Docker's official GPG key
+# This adds the GPG key for the official Docker repository to the system.
+# The key is used to verify the integrity of the Docker packages.
+echo "INFO: Adding Docker's official GPG key..."
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+# 4. Add the Docker APT repository
+# This command adds the official Docker repository to your system's APT sources.
+# This ensures you will install the latest version of Docker.
+echo "INFO: Adding the Docker APT repository..."
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# 5. Update package lists again with the new repository
+# After adding the new repository, the package lists need to be updated again.
+echo "INFO: Updating package lists with Docker repository..."
+sudo apt update
+
+# 6. Install Docker Engine and related packages
+# This installs the Docker Engine, command-line interface, containerd, and the Docker Compose plugin.
+echo "INFO: Installing Docker Engine..."
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# 7. Add the current user to the 'docker' group
+# This post-installation step allows you to run Docker commands without prefixing them with 'sudo'. [6]
+# The docker group grants privileges equivalent to the root user. [8]
+echo "INFO: Adding the current user to the 'docker' group..."
+sudo usermod -aG docker ${USER}
+
+sudo systemctl status docker
+sudo systemctl start docker
+sudo systemctl status docker
+sudo systemctl enable docker
+
+# --- Script End ---
+
+echo "SUCCESS: Docker has been installed successfully."
+echo "INFO: You may need to log out and log back in for the group changes to take effect."
+echo "INFO: To verify the installation, run 'docker --version' after logging back in."# VPP VXLAN Decapsulation, NAT, and IPsec Forwarding Simulation
+
+VXLAN Decapsulation -> NAT -> IPsec Encapsulation
+
+This project provides a complete, containerized simulation of a sophisticated cloud networking architecture. It demonstrates how VPP (Vector Packet Processing) can be used to replicate the functionality of a custom Linux-based network forwarding appliance for mirroring and processing traffic.
+
+## The Real-World Scenario
+
+### High-Level Purpose
+
+This architecture is designed to mirror live network traffic (specifically Netflow, sFlow, or IPFIX data) from an AWS environment and forward it to a processing service running in Google Kubernetes Engine (GKE) within the Google Cloud Platform (GCP). A primary requirement of this solution is to preserve the original source IP address of the traffic throughout the entire process.
+
+### The Core Technical Challenge
+
+The main obstacle this system overcomes is related to how networking operates at Layer 2 (MAC addresses) and Layer 3 (IP addresses) within a virtualized cloud environment.
+
+When AWS Traffic Mirroring captures a network packet, it wraps it in a VXLAN header and sends it to a destination. The "Mirror Target EC2" instances in this design receive and decapsulate this VXLAN packet. The packet that emerges is an exact copy of the original, including its original destination MAC address.
+
+The Linux kernel on the EC2 instance, upon seeing a packet with a destination MAC address that doesn't belong to any of its own network interfaces, would not process it up to the IP layer for routing. Instead, it would attempt to forward it at Layer 2. This packet would then be dropped by the AWS network infrastructure, which enforces a security check that the source MAC address of any outgoing packet must match the MAC of the Elastic Network Interface (ENI) it is leaving from.
+
+### The Linux-Based Solution: A Multi-Layer Forwarding Engine
+
+To solve this, the real-world "Mirror Target EC2" instances are configured as sophisticated forwarding engines using a combination of standard Linux networking utilities:
+
+*   **Dual Network Interfaces (ENIs):** Each EC2 instance uses two ENIs: a primary one and a secondary one dedicated to the forwarding task.
+*   **VXLAN Decapsulation:** A virtual VXLAN interface (`vxlan1`) is created to listen for the mirrored traffic on UDP port 4789 and automatically decapsulate it.
+*   **Virtual Bridge:** A network bridge (`br0`) is set up to act as a virtual switch, connecting the VXLAN interface and the secondary ENI.
+*   **Layer 2 MAC Address NAT (`ebtables`):** This is the crucial step. An `ebtables` rule rewrites the destination MAC address of the decapsulated packet to match the bridge's own MAC address. This tricks the kernel into believing the packet is destined for the EC2 instance itself.
+*   **Passing to the IP Stack:** Because the destination MAC now matches a local interface, the kernel passes the packet up from Layer 2 to the IP (Layer 3) stack.
+*   **Layer 3 IP Address NAT (`iptables`):** A Destination NAT (DNAT) rule changes the packet's destination IP address and port to that of the service in GCP, while leaving the original source IP untouched.
+*   **Routing & Egress:** Custom routing rules and MAC address configuration on the bridge ensure the final packet is sent out correctly without being dropped by AWS security checks.
+
+---
+
+## The VPP Simulation
+
+This project replaces the complex Linux-based forwarding engine with a single, high-performance VPP instance running in a Docker container. VPP's user-space networking stack can perform all the required functions more directly and efficiently.
+
+### Simulated Components
+
+*   **`aws_vpp` container:** This simulates the "Mirror Target EC2" instance. It runs VPP and performs all the core logic.
+*   **`gcp_vpp` container:** This simulates the GCP endpoint. It terminates the IPsec tunnel and receives the final traffic.
+*   **`send_flows.py` script:** This Python script simulates the AWS Traffic Mirroring source, generating and sending a correctly formatted VXLAN-encapsulated packet to the `aws_vpp` container.
+
+### Traffic Flow within the `aws_vpp` Container
+
+1.  **Ingress:** The `aws_vpp` container receives the VXLAN packet on its `host-aws-phy` interface.
+2.  **VXLAN Decapsulation:** The packet is directed to a VPP `vxlan_tunnel0` interface, which decapsulates it, exposing the original inner packet.
+3.  **L3 Processing (The VPP Advantage):** Unlike the Linux kernel, VPP does **not** need the complex `ebtables` MAC address hack. As a user-space forwarding plane, once the packet is decapsulated, its inner L3 header is immediately available for processing in the VPP graph.
+4.  **Destination NAT (DNAT):** VPP's `nat44` feature performs a static mapping, changing the inner packet's destination IP and port to that of the GCP service, exactly like the `iptables` rule. The original source IP is preserved.
+5.  **IPsec Encapsulation:** The modified packet is routed into an IPIP tunnel that is protected by a static IPsec Security Association (SA). VPP encrypts the packet using AES-GCM-128.
+6.  **Egress:** The final, encrypted ESP packet is sent out of the `host-aws-phy` interface towards the `gcp_vpp` container.
+
+## How to Run
+
+1.  **Prerequisites:** Docker, Python 3, and the Scapy library (`pip install scapy`).
+2.  **Build & Start:** Run `sudo bash ./run_vpp_test.sh`. This script will build the Docker image, create the networks, and start the containers.
+3.  **Send Traffic:** In a **new terminal**, run `python3 send_flows.py`.
+4.  **Verify:**
+    *   Check the NAT session on the AWS side: `sudo bash ./debug.sh aws_vpp show nat44 sessions`
+    *   Trace the final decrypted packet on the GCP side:
+        *   `sudo bash ./debug.sh gcp_vpp trace add af-packet-input 10`
+        *   Run `python3 send_flows.py` again.
+        *   `sudo bash ./debug.sh gcp_vpp show trace`
+5.  **Cleanup:** Run `sudo bash ./cleanup.sh` to stop and remove all containers and networks.#!/bin/bash
+#
+# run_vpp_test.sh
+#
+# This is the master script to execute the VXLAN -> NAT -> IPsec simulation.
+# It ensures a consistent and clean environment for every run by following a strict
+# build -> cleanup -> setup sequence, and then provides instructions for testing.
+# It must be run with sudo because it modifies host network interfaces.
+
+# Exit immediately if any command fails.
+set -e
+
+# --- Step 1: Build the Docker Image ---
+# This command builds the Docker image defined in 'Dockerfile'.
+# We tag it as 'vpp-forwarder:latest' for easy reference in the setup script.
+echo "--- Step 1: Building Docker image... ---"
+docker build -t vpp-forwarder:latest .
+
+# --- Step 2: Run the Cleanup Script ---
+# This ensures that any resources from a previous run are completely removed.
+echo "--- Step 2: Cleaning up previous environment... ---"
+sudo bash ./cleanup.sh
+
+# --- Step 3: Run the Setup Script ---
+# This script builds the test environment from scratch.
+echo "--- Step 3: Setting up new test environment... ---"
+sudo bash ./setup.sh
+
+# --- Step 4: Display Status and Instructions ---
+echo
+echo "--- Waiting a few seconds for IPsec tunnel to establish... ---"
+sleep 5
+
+echo
+echo "==================== IPsec SA Status ===================="
+echo "--- AWS VPP SAs: ---"
+docker exec aws_vpp vppctl show ipsec sa
+echo
+echo "--- GCP VPP SAs: ---"
+docker exec gcp_vpp vppctl show ipsec sa
+echo "========================================================="
+echo
+
+echo "********** ENVIRONMENT IS READY **********"
+echo
+echo "In a new terminal, run the following command to send traffic:"
+echo "  python3 send_flows.py"
+echo
+echo "Use the debug script to verify the results:"
+echo "  sudo bash ./debug.sh aws_vpp show nat44 sessions"
+echo "  sudo bash ./debug.sh gcp_vpp show trace"
+echo#!/usr/bin/env python3
+#
+# send_flows.py
+#
+# This script uses scapy to craft a sample Netflow v5 packet, encapsulate it
+# in a VXLAN header, and send it to the aws_vpp container to simulate
+# traffic from an AWS Traffic Mirroring source.
+
+import time
+from scapy.all import *
+
+# --- Configuration ---
+# The underlay IP of the aws_vpp container.
+AWS_VPP_IP = "192.168.1.2"
+# The VNI must match the 'create vxlan tunnel' command in aws-config.sh.
+VXLAN_VNI = 100
+# The destination port for VXLAN traffic.
+VXLAN_PORT = 4789
+
+# This is the "real" source IP of the original flow.
+# We are simulating a Netflow exporter at this address.
+ORIGINAL_SRC_IP = "10.1.1.1"
+# This is a dummy destination IP that the VPP NAT rule is configured to match.
+DUMMY_DST_IP = "10.10.10.10"
+# The destination port for the Netflow data.
+NETFLOW_PORT = 2055
+
+# --- 1. Craft the Inner Packet (Sample Netflow v5) ---
+# This is the original packet that AWS Traffic Mirroring would capture.
+netflow_header = b""
+netflow_header += b"\x00\x05"  # Version 5
+netflow_header += b"\x00\x01"  # Flow Record Count (1)
+netflow_header += b"\x00\x00\x00\x00" * 5 # Timestamps and sequence
+netflow_header += b"\x00\x00\x00\x00" # Engine and sampling
+
+netflow_record = b""
+netflow_record += inet_aton("10.1.1.1")  # srcaddr
+netflow_record += inet_aton("10.2.2.2")  # dstaddr
+netflow_record += b"\x00" * 28 # Other fields
+netflow_record += b"\x06"  # prot (TCP)
+netflow_record += b"\x00" * 7  # Padding
+
+netflow_payload = netflow_header + netflow_record
+# The inner packet has the original source and the dummy destination.
+inner_packet = IP(src=ORIGINAL_SRC_IP, dst=DUMMY_DST_IP) / UDP(sport=RandShort(), dport=NETFLOW_PORT) / Raw(load=netflow_payload)
+
+# --- 2. Craft the Outer Packet (VXLAN Encapsulation) ---
+# The inner packet is now the payload for the VXLAN header.
+# Scapy's VXLAN() layer handles the encapsulation.
+vxlan_packet = IP(dst=AWS_VPP_IP) / \
+               UDP(sport=RandShort(), dport=VXLAN_PORT) / \
+               VXLAN(vni=VXLAN_VNI) / \
+               inner_packet
+
+# --- 3. Send the packet ---
+print(f"Sending VXLAN-encapsulated Netflow packet to {AWS_VPP_IP}:{VXLAN_PORT}")
+print(f"  - VNI: {VXLAN_VNI}")
+print(f"  - Inner Packet: {ORIGINAL_SRC_IP} -> {DUMMY_DST_IP}:{NETFLOW_PORT}")
+print("Press Ctrl+C to stop.")
+
+try:
+    while True:
+        send(vxlan_packet, verbose=0)
+        print(".", end="", flush=True)
+        time.sleep(1)
+except KeyboardInterrupt:
+    print("\nStopping.")#!/bin/bash
+# setup.sh
+#
+# This script builds the complete test environment from a clean slate.
+# It must be run with sudo because it creates and modifies host network interfaces.
+
+# Exit immediately if any command fails.
+set -e
+
+# --- 1. Host Network Setup ---
+# This section creates the "physical" underlay network on the host machine.
+echo "--- Preparing host environment... ---"
+sudo ip link add name br0 type bridge || true
+sudo ip link set br0 up
+
+# --- 2. Docker Container Setup ---
+# Launch the two containers that will act as our separate network nodes.
+echo "--- Creating Docker containers (aws_vpp & gcp_vpp)... ---"
+docker run -d --name aws_vpp --privileged -v "$(pwd)/aws-startup.conf:/etc/vpp/startup.conf" -it vpp-forwarder:latest
+docker run -d --name gcp_vpp --privileged -v "$(pwd)/gcp-startup.conf:/etc/vpp/startup.conf" -it vpp-forwarder:latest
+
+# --- 3. Network Plumbing for AWS ---
+echo "--- Waiting for aws_vpp network namespace... ---"
+AWS_PID=$(docker inspect -f '{{.State.Pid}}' aws_vpp)
+while [ ! -f /proc/$AWS_PID/ns/net ]; do
+  sleep 0.1
+done
+echo "aws_vpp network namespace is ready."
+
+sudo ip link delete aws-phy 2>/dev/null || true
+sudo ip link delete aws-br 2>/dev/null || true
+
+echo "Creating veth pair for aws_vpp..."
+sudo ip link add aws-phy type veth peer name aws-br
+sudo ip link set aws-phy netns $AWS_PID
+sudo ip link set aws-br master br0
+sudo ip link set aws-br up
+
+# --- 4. Network Plumbing for GCP ---
+echo "--- Waiting for gcp_vpp network namespace... ---"
+GCP_PID=$(docker inspect -f '{{.State.Pid}}' gcp_vpp)
+while [ ! -f /proc/$GCP_PID/ns/net ]; do
+  sleep 0.1
+done
+echo "gcp_vpp network namespace is ready."
+
+sudo ip link delete gcp-phy 2>/dev/null || true
+sudo ip link delete gcp-br 2>/dev/null || true
+
+echo "Creating veth pair for gcp_vpp..."
+sudo ip link add gcp-phy type veth peer name gcp-br
+sudo ip link set gcp-phy netns $GCP_PID
+sudo ip link set gcp-br master br0
+sudo ip link set gcp-br up
+
+# --- 5. VPP Initialization ---
+echo "--- Waiting for VPP to initialize... ---"
+for C in aws_vpp gcp_vpp; do
+    echo "Waiting for VPP in ${C}..."
+    until docker exec ${C} test -S /run/vpp/cli.sock; do sleep 1; done
+    echo "VPP in ${C} is ready."
+done
+
+# --- 6. Apply VPP Configurations ---
+echo "--- Copying and applying VPP configurations... ---"
+docker cp aws-config.sh aws_vpp:/root/aws-config.sh
+docker cp gcp-config.sh gcp_vpp:/root/gcp-config.sh
+docker exec aws_vpp bash /root/aws-config.sh
+docker exec gcp_vpp bash /root/gcp-config.sh
+
+echo "--- Setup complete! ---"#!/bin/bash
+
+# A simple script to set up HugePages for DPDK
+
+# Allocate 1024 hugepages on NUMA node 0.
+# Check your memory requirements and adjust as needed.
+echo 1024 | sudo tee /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+
+# Mount the HugePages filesystem.
+sudo mkdir -p /mnt/huge
+sudo mount -t hugetlbfs nodev /mnt/huge
+
+echo "HugePages setup complete for NUMA node 0."

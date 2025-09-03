@@ -1,0 +1,198 @@
+version: '3.8'
+
+# VPP Multi-Container Chain
+# Architecture: INGRESS → VXLAN → NAT → IPSEC → FRAGMENT → GCP
+
+services:
+  # Container 1: INGRESS - Receives VXLAN traffic
+  chain-ingress:
+    build:
+      context: .
+      dockerfile: src/containers/Dockerfile.base
+    container_name: chain-ingress
+    hostname: chain-ingress
+    privileged: true
+    volumes:
+      - ./src/configs:/vpp-config:ro
+    networks:
+      underlay:
+        ipv4_address: 192.168.1.2
+      chain-1-2:
+        ipv4_address: 10.1.1.1
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: >
+      bash -c "
+      sleep 8 && 
+      chmod +x /vpp-config/*.sh &&
+      /vpp-config/ingress-config.sh &&
+      tail -f /dev/null
+      "
+
+  # Container 2: VXLAN - Decapsulates VXLAN packets
+  chain-vxlan:
+    build:
+      context: .
+      dockerfile: src/containers/Dockerfile.base
+    container_name: chain-vxlan
+    hostname: chain-vxlan
+    privileged: true
+    volumes:
+      - ./src/configs:/vpp-config:ro
+    networks:
+      chain-1-2:
+        ipv4_address: 10.1.1.2
+      chain-2-3:
+        ipv4_address: 10.1.2.1
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: >
+      bash -c "
+      sleep 10 && 
+      chmod +x /vpp-config/*.sh &&
+      /vpp-config/vxlan-config.sh &&
+      tail -f /dev/null
+      "
+
+  # Container 3: NAT - Network Address Translation
+  chain-nat:
+    build:
+      context: .
+      dockerfile: src/containers/Dockerfile.base
+    container_name: chain-nat
+    hostname: chain-nat
+    privileged: true
+    volumes:
+      - ./src/configs:/vpp-config:ro
+    networks:
+      chain-2-3:
+        ipv4_address: 10.1.2.2
+      chain-3-4:
+        ipv4_address: 10.1.3.1
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: >
+      bash -c "
+      sleep 12 && 
+      chmod +x /vpp-config/*.sh &&
+      /vpp-config/nat-config.sh &&
+      tail -f /dev/null
+      "
+
+  # Container 4: IPSEC - ESP Encryption
+  chain-ipsec:
+    build:
+      context: .
+      dockerfile: src/containers/Dockerfile.base
+    container_name: chain-ipsec
+    hostname: chain-ipsec
+    privileged: true
+    volumes:
+      - ./src/configs:/vpp-config:ro
+    networks:
+      chain-3-4:
+        ipv4_address: 10.1.3.2
+      chain-4-5:
+        ipv4_address: 10.1.4.1
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: >
+      bash -c "
+      sleep 14 && 
+      chmod +x /vpp-config/*.sh &&
+      /vpp-config/ipsec-config.sh &&
+      tail -f /dev/null
+      "
+
+  # Container 5: FRAGMENT - IP Fragmentation
+  chain-fragment:
+    build:
+      context: .
+      dockerfile: src/containers/Dockerfile.base
+    container_name: chain-fragment
+    hostname: chain-fragment
+    privileged: true
+    volumes:
+      - ./src/configs:/vpp-config:ro
+    networks:
+      chain-4-5:
+        ipv4_address: 10.1.4.2
+      underlay:
+        ipv4_address: 192.168.1.4
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: >
+      bash -c "
+      sleep 16 && 
+      chmod +x /vpp-config/*.sh &&
+      /vpp-config/fragment-config.sh &&
+      tail -f /dev/null
+      "
+
+  # Container 6: GCP - Destination Endpoint
+  chain-gcp:
+    build:
+      context: .
+      dockerfile: src/containers/Dockerfile.base
+    container_name: chain-gcp
+    hostname: chain-gcp
+    privileged: true
+    volumes:
+      - ./src/configs:/vpp-config:ro
+    networks:
+      underlay:
+        ipv4_address: 192.168.1.3
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: >
+      bash -c "
+      sleep 18 && 
+      chmod +x /vpp-config/*.sh &&
+      /vpp-config/gcp-config.sh &&
+      tail -f /dev/null
+      "
+
+networks:
+  # Main underlay network (192.168.1.0/24)
+  underlay:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.1.0/24
+          gateway: 192.168.1.1
+
+  # Inter-container chain networks
+  chain-1-2:  # Ingress → VXLAN
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.1.1.0/24
+
+  chain-2-3:  # VXLAN → NAT
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.1.2.0/24
+
+  chain-3-4:  # NAT → IPsec
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.1.3.0/24
+
+  chain-4-5:  # IPsec → Fragment
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.1.4.0/24

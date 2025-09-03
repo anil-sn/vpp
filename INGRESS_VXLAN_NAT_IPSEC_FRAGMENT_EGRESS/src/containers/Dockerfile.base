@@ -1,0 +1,26 @@
+# VPP Multi-Container Chain - Base Container
+FROM ligato/vpp-base:latest
+
+# Install essential tools for debugging and networking
+RUN apt-get update && \
+    apt-get install -y \
+    python3-scapy \
+    tcpdump \
+    net-tools \
+    iproute2 \
+    iputils-ping \
+    curl \
+    wget \
+    htop \
+    --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create directories for VPP configurations
+RUN mkdir -p /vpp-config
+
+# Set working directory
+WORKDIR /vpp-config
+
+# Keep container running
+CMD ["tail", "-f", "/dev/null"]

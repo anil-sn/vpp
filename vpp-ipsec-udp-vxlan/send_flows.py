@@ -41,15 +41,22 @@ netflow_record += b"\x06"  # prot (TCP)
 netflow_record += b"\x00" * 7  # Padding
 
 netflow_payload = netflow_header + netflow_record
+
+# Create a large payload to force fragmentation after encapsulation.
+large_payload = b'\x41' * 1400 # 1400 bytes of the letter 'A'
+
 # The inner packet has the original source and the dummy destination.
-inner_packet = IP(src=ORIGINAL_SRC_IP, dst=DUMMY_DST_IP) / UDP(sport=RandShort(), dport=NETFLOW_PORT) / Raw(load=netflow_payload)
+inner_packet = IP(src=ORIGINAL_SRC_IP, dst=DUMMY_DST_IP) / UDP(sport=RandShort(), dport=NETFLOW_PORT) / Raw(load=netflow_payload + large_payload)
+
+# The inner packet has the original source and the dummy destination.
+#inner_packet = IP(src=ORIGINAL_SRC_IP, dst=DUMMY_DST_IP) / UDP(sport=RandShort(), dport=NETFLOW_PORT) / Raw(load=netflow_payload)
 
 # --- 2. Craft the Outer Packet (VXLAN Encapsulation) ---
 # The inner packet is now the payload for the VXLAN header.
 # Scapy's VXLAN() layer handles the encapsulation.
 vxlan_packet = IP(dst=AWS_VPP_IP) / \
                UDP(sport=RandShort(), dport=VXLAN_PORT) / \
-               VXLAN(vni=VXLAN_VNI) / \
+               VXLAN(vni=VXLAN_VNI, flags=0x08) / \
                inner_packet
 
 # --- 3. Send the packet ---

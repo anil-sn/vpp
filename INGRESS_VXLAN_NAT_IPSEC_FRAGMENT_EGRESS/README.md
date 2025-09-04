@@ -7,7 +7,50 @@
 
 ## 🎯 Overview
 
-This project implements a high-performance, modular network processing pipeline using Vector Packet Processing (VPP) across multiple Docker containers. The architecture demonstrates advanced networking concepts including VXLAN decapsulation, NAT translation, IPsec encryption, and packet fragmentation in a real-world cloud networking scenario.
+This project showcases a high-performance, modular network processing pipeline using Vector Packet Processing (VPP) distributed across multiple Docker containers. It demonstrates a sequence of advanced networking functions: VXLAN decapsulation, Network Address Translation (NAT), IPsec encryption, and packet fragmentation, simulating a real-world cloud networking scenario.
+
+### Architecture and Processing Flow
+
+The architecture consists of a chain of Docker containers, each responsible for a specific network function. Data flows through this chain in the following sequence:
+
+1.  **INGRESS:** This container receives incoming VXLAN-encapsulated UDP traffic.
+2.  **VXLAN:** The VXLAN container decapsulates the received packets, specifically targeting VNI (VXLAN Network Identifier) 100, to extract the inner IP packets.
+3.  **NAT44:** The NAT container performs a network address translation, mapping the source address and port of the inner packet (from 10.10.10.10:2055 to 10.0.3.1:2055).
+4.  **IPSEC:** The IPsec container encrypts the translated packets using ESP with AES-GCM-128 in an IPIP tunnel.
+5.  **FRAGMENT:** If a packet's size exceeds the MTU (Maximum Transmission Unit) of 1400 bytes, this container fragments it.
+6.  **GCP:** This container acts as the final destination, receiving the processed and potentially fragmented packets.
+
+### Container and Network Setup
+
+The project uses a `docker-compose.yml` file to orchestrate the containers. Each container is connected to its neighbors in the chain via dedicated Docker networks. The overall network topology is as follows:
+
+*   **underlay (192.168.1.0/24):** The main network for ingress and egress traffic.
+*   **chain-1-2 (10.1.1.0/24):** Connects the INGRESS and VXLAN containers.
+*   **chain-2-3 (10.1.2.0/24):** Connects the VXLAN and NAT containers.
+*   **chain-3-4 (10.1.3.0/24):** Connects the NAT and IPsec containers.
+*   **chain-4-5 (10.1.4.0/24):** Connects the IPsec and FRAGMENT containers.
+
+### Project Structure
+
+The project is organized with the following key components:
+
+*   `README.md`: Provides a comprehensive overview of the project.
+*   `docker-compose.yml`: Defines and configures the multi-container setup.
+*   `src/main.py`: The main command-line interface for managing the setup, running tests, and debugging.
+*   `src/utils/`: Contains Python modules for container management, network setup, and traffic generation.
+*   `src/configs/`: Includes shell scripts for configuring VPP within each container.
+
+### Use Cases
+
+This project is a practical demonstration of several cloud networking scenarios, including:
+
+*   **Multi-Cloud Connectivity:** Establishing secure tunnels between different cloud environments (e.g., AWS and GCP).
+*   **Network Function Virtualization (NFV):** Chaining together modular network services.
+*   **Microservices Networking:** Optimizing the data plane for service meshes.
+*   **Edge Computing:** High-performance packet processing at the network edge.
+*   **Security Gateway:** Combining NAT and IPsec for enterprise-grade traffic security.
+
+It is a valuable resource for anyone interested in advanced cloud networking, NFV, and network security.
 
 ### 🏗️ Architecture
 

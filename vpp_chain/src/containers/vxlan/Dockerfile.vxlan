@@ -1,11 +1,8 @@
 # VXLAN-specific container build
 FROM vpp-chain-base:latest
 
-# Copy VXLAN-specific configurations
-COPY src/containers/vxlan/vxlan-advanced.conf /etc/vpp/vxlan-advanced.conf
-
 # VXLAN monitoring script
-COPY src/containers/vxlan/monitor-vxlan.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/monitor-vxlan.sh
+COPY src/containers/vxlan/vxlan-config.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/vxlan-config.sh
 
 LABEL purpose="VXLAN decapsulation container"

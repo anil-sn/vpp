@@ -10,14 +10,11 @@ RUN apt-get update && apt-get install -y \
 
 # Copy ingress-specific configurations
 COPY src/containers/ingress/ingress-config.sh /etc/vpp/ingress-config.sh
+RUN chmod +x  /etc/vpp/ingress-config.sh
 
 # Ingress-specific environment
 ENV VPP_INGRESS_IP=192.168.10.10
 ENV VPP_VXLAN_PORT=4789
-
-# Traffic generation and monitoring
-COPY src/containers/ingress/monitor-ingress.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/monitor-ingress.sh
 
 LABEL purpose="VXLAN ingress traffic receiver"
 LABEL port="4789"

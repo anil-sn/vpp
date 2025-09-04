@@ -23,14 +23,28 @@ RUN apt-get update && \
     && apt-get install -y \
     python3-scapy \
     tcpdump \
+    tshark \
+    wireshark \
+    ngrep \
     net-tools \
     iproute2 \
-    iputils-ping \
+    dnsutils \
+    nmap \
+    traceroute \
+    mtr \
+    iperf3 \
+    netcat \
+    telnet \
+    jq \
     wget \
+    iputils-ping \
+    curl \
     htop \
+    gnupg2 \
+    ca-certificates \
+    tree \
     vim \
-    strace \
-    gdb \
+    libcurl4-openssl-dev \
     --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*

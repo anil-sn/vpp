@@ -7,9 +7,6 @@ RUN apt-get update && apt-get install -y \
     netstat-nat \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy NAT-specific configurations
-COPY src/containers/nat/nat-advanced.conf /etc/vpp/nat-advanced.conf
-
 # NAT-specific environment
 ENV VPP_NAT_INSIDE=10.1.2.2
 ENV VPP_NAT_OUTSIDE=10.1.3.1
@@ -17,8 +14,8 @@ ENV VPP_NAT_POOL_START=10.1.3.1
 ENV VPP_NAT_POOL_END=10.1.3.10
 
 # NAT monitoring and management
-COPY src/containers/nat/monitor-nat.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/monitor-nat.sh
+COPY src/containers/nat/nat-config.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/nat-config.sh
 
 LABEL purpose="NAT44 translation container"
 LABEL translation="10.10.10.10:2055->10.0.3.1:2055"

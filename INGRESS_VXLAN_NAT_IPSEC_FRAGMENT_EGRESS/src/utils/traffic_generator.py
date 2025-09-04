@@ -8,51 +8,40 @@ import subprocess
 import time
 import threading
 import socket
+import subprocess
+import time
+import threading
 from scapy.all import *
 from .logger import get_logger, log_success, log_error, log_warning, log_info
+from .container_manager import ContainerManager
+from .config_manager import ConfigManager
 
 class TrafficGenerator:
     """Generates and manages test traffic for the VPP chain"""
     
-    # Traffic configuration
-    CONFIG = {
-        "bridge_ip": "192.168.1.1",
-        "ingress_ip": "192.168.1.2", 
-        "gcp_ip": "192.168.1.3",
-        "vxlan_port": 4789,
-        "vxlan_vni": 100,
-        "inner_src_ip": "10.10.10.5",
-        "inner_dst_ip": "10.10.10.10",
-        "inner_dst_port": 2055,
-        "packet_count": 10,
-        "packet_size": 1200,  # Large enough to test fragmentation
-        "test_duration": 10
-    }
-    
-    def __init__(self):
+    def __init__(self, config_manager: ConfigManager):
         self.logger = get_logger()
-        self.interface = None
-        self.sent_packets = 0
-        self.received_packets = 0
-        self.capturing = False
-        self.capture_thread = None
+        self.config_manager = config_manager
+        self.container_manager = ContainerManager(config_manager) # Pass config_manager to ContainerManager
+        
+        # Traffic configuration
+        self.CONFIG = self.config_manager.get_traffic_config()
+        
+        # Dynamically set ingress_ip and gcp_ip based on current mode's container config
+        containers = self.config_manager.get_containers()
+        self.CONFIG["ingress_ip"] = containers[0]["networks"]["underlay"]
+        self.CONFIG["gcp_ip"] = containers[-1]["networks"]["underlay"]
         
     def check_environment(self):
         """Verify that the environment is ready for traffic testing"""
         try:
             log_info("Checking environment readiness...")
             
-            # Check containers are running
-            containers = ["chain-ingress", "chain-vxlan", "chain-nat", "chain-ipsec", "chain-fragment", "chain-gcp"]
-            for container in containers:
-                result = subprocess.run([
-                    "docker", "ps", "--format", "table {{.Names}}"
-                ], capture_output=True, text=True, check=True)
-                
-                if container not in result.stdout:
-                    log_error(f"Container {container} is not running")
-                    return False
-                
+            # Check containers are running using ContainerManager's verification
+            if not self.container_manager.verify_containers():
+                log_error("Not all containers are running.")
+                return False
+            
             log_success("All containers are running")
             
             # Check bridge connectivity
@@ -162,7 +151,8 @@ class TrafficGenerator:
         try:
             def packet_handler(packet):
                 if self.capturing and packet.haslayer(IP):
-                    # Check if this looks like our test traffic
+                    # Heuristic check: Assumes test traffic is destined for GCP IP or from NAT's internal range.
+                    # For more robust testing, consider embedding a unique identifier in the payload.
                     if packet[IP].dst == self.CONFIG["gcp_ip"] or packet[IP].src.startswith("10.0.3"):
                         self.received_packets += 1
                         log_info(f"Captured packet {self.received_packets}")
@@ -226,62 +216,60 @@ class TrafficGenerator:
         try:
             log_info("Analyzing chain processing statistics...")
             
-            containers_info = [
-                ("chain-ingress", "Ingress reception"),
-                ("chain-vxlan", "VXLAN decapsulation"), 
-                ("chain-nat", "NAT translation"),
-                ("chain-ipsec", "IPsec encryption"),
-                ("chain-fragment", "Fragmentation"),
-                ("chain-gcp", "GCP delivery")
-            ]
-            
             print("\n📊 Chain Processing Statistics:")
             print("-" * 70)
             
             chain_success = True
             
-            for container, description in containers_info:
+            for container_info in self.container_manager.CONTAINERS:
+                container_name = container_info["name"]
+                description = container_info["description"]
                 try:
                     # Get interface statistics
                     result = subprocess.run([
-                        "docker", "exec", container, "vppctl", "show", "interface"
+                        "docker", "exec", container_name, "vppctl", "show", "interface"
                     ], capture_output=True, text=True, timeout=10)
                     
                     if result.returncode == 0:
-                        # Parse packet counts
+                        # Parse packet counts more robustly. Note: VPP output format can change, making this fragile.
                         rx_packets = 0
                         tx_packets = 0
                         drops = 0
                         
                         for line in result.stdout.split('\n'):
-                            if 'rx packets' in line and line.strip():
+                            line = line.strip()
+                            if line.startswith("rx packets"):
                                 try:
                                     rx_packets = int(line.split()[-1])
-                                except:
+                                except ValueError:
                                     pass
-                            if 'tx packets' in line and line.strip():
+                            elif line.startswith("tx packets"):
                                 try:
                                     tx_packets = int(line.split()[-1])
-                                except:
+                                except ValueError:
                                     pass
-                            if 'drops' in line and line.strip():
+                            elif line.startswith("drops"):
                                 try:
                                     drops = int(line.split()[-1])
-                                except:
+                                except ValueError:
                                     pass
                         
                         status = "✅" if rx_packets > 0 or tx_packets > 0 else "❌"
-                        print(f"{status} {container:15} ({description:20}): RX={rx_packets:3}, TX={tx_packets:3}, Drops={drops:3}")
+                        print(f"{status} {container_name:15} ({description:20}): RX={rx_packets:3}, TX={tx_packets:3}, Drops={drops:3}")
                         
-                        if rx_packets == 0 and tx_packets == 0 and container != "chain-gcp":
+                        # For GCP, we only expect RX packets
+                        if container_name == "chain-gcp":
+                            if rx_packets == 0:
+                                chain_success = False
+                        elif rx_packets == 0 and tx_packets == 0:
                             chain_success = False
                             
                     else:
-                        print(f"❌ {container:15}: VPP not responding")
+                        print(f"❌ {container_name:15}: VPP not responding")
                         chain_success = False
                         
                 except Exception as e:
-                    print(f"⚠️ {container:15}: Error getting stats: {e}")
+                    print(f"⚠️ {container_name:15}: Error getting stats: {e}")
             
             return chain_success
             

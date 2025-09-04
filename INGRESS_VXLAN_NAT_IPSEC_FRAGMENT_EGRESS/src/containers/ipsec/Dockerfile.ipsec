@@ -1,0 +1,11 @@
+# IPsec-specific container build
+FROM vpp-chain-base:latest
+
+# Copy IPsec-specific configurations
+COPY src/containers/ipsec/ipsec-advanced.conf /etc/vpp/ipsec-advanced.conf
+
+# IPsec monitoring script
+COPY src/containers/ipsec/monitor-ipsec.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/monitor-ipsec.sh
+
+LABEL purpose="IPsec encryption container"

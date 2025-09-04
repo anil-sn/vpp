@@ -14,7 +14,7 @@ This project implements a high-performance, modular network processing pipeline 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │   INGRESS   │───▶│   VXLAN     │───▶│    NAT44    │───▶│   IPSEC     │───▶│ FRAGMENT    │───▶ [GCP]
-│ 192.168.1.2 │    │ Decap VNI   │    │ 10.10.10.10 │    │ AES-GCM-128 │    │  MTU 1400   │
+│ 192.168.10.2│    │ Decap VNI   │    │ 10.10.10.10 │    │ AES-GCM-128 │    │  MTU 1400   │
 │   Receives  │    │    100      │    │ → 10.0.3.1  │    │ Encryption  │    │ IP Fragments│
 │VXLAN Traffic│    │ UDP:4789    │    │  Port:2055  │    │ ESP Tunnel  │    │ Large Pkts  │
 └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
@@ -138,7 +138,7 @@ sudo python3 src/main.py debug chain-vxlan "show trace"
 
 | Container | Role | Networks | Key Configuration |
 |-----------|------|----------|-------------------|
-| **chain-ingress** | VXLAN Reception | underlay, chain-1-2 | Receives VXLAN on 192.168.1.2:4789 |
+| **chain-ingress** | VXLAN Reception | underlay, chain-1-2 | Receives VXLAN on 192.168.10.2:4789 |
 | **chain-vxlan** | VXLAN Decapsulation | chain-1-2, chain-2-3 | Decaps VNI 100, forwards inner IP |
 | **chain-nat** | NAT Translation | chain-2-3, chain-3-4 | Maps 10.10.10.10:2055 → 10.0.3.1:2055 |
 | **chain-ipsec** | IPsec Encryption | chain-3-4, chain-4-5 | ESP AES-GCM-128 encryption |
@@ -149,7 +149,7 @@ sudo python3 src/main.py debug chain-vxlan "show trace"
 
 ```
 Networks:
-├── underlay (192.168.1.0/24)     # Main network for ingress/egress
+├── underlay (192.168.10.0/24)    # Main network for ingress/egress
 ├── chain-1-2 (10.1.1.0/24)      # Ingress → VXLAN
 ├── chain-2-3 (10.1.2.0/24)      # VXLAN → NAT
 ├── chain-3-4 (10.1.3.0/24)      # NAT → IPsec

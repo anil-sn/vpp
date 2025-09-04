@@ -8,55 +8,16 @@ import subprocess
 import socket
 import time
 from .logger import get_logger, log_success, log_error, log_warning, log_info
+from .config_manager import ConfigManager
 
 class NetworkManager:
     """Manages Docker networks for the VPP chain"""
     
-    # Network definitions
-    NETWORKS = [
-        {
-            "name": "underlay",
-            "subnet": "192.168.1.0/24",
-            "gateway": "192.168.1.1",
-            "description": "Main underlay network"
-        },
-        {
-            "name": "chain-1-2", 
-            "subnet": "10.1.1.0/24",
-            "gateway": "10.1.1.1",
-            "description": "Ingress → VXLAN"
-        },
-        {
-            "name": "chain-2-3",
-            "subnet": "10.1.2.0/24", 
-            "gateway": "10.1.2.1",
-            "description": "VXLAN → NAT"
-        },
-        {
-            "name": "chain-3-4",
-            "subnet": "10.1.3.0/24",
-            "gateway": "10.1.3.1", 
-            "description": "NAT → IPsec"
-        },
-        {
-            "name": "chain-4-5",
-            "subnet": "10.1.4.0/24",
-            "gateway": "10.1.4.1",
-            "description": "IPsec → Fragment"
-        }
-    ]
-    
-    # Connectivity test pairs
-    CONNECTIVITY_TESTS = [
-        {"from": "chain-ingress", "to": "10.1.1.2", "description": "Ingress → VXLAN"},
-        {"from": "chain-vxlan", "to": "10.1.2.2", "description": "VXLAN → NAT"},
-        {"from": "chain-nat", "to": "10.1.3.2", "description": "NAT → IPsec"},
-        {"from": "chain-ipsec", "to": "10.1.4.2", "description": "IPsec → Fragment"},
-        {"from": "chain-fragment", "to": "192.168.1.3", "description": "Fragment → GCP"}
-    ]
-    
-    def __init__(self):
+    def __init__(self, config_manager: ConfigManager):
         self.logger = get_logger()
+        self.config_manager = config_manager
+        self.NETWORKS = self.config_manager.get_networks()
+        self.CONNECTIVITY_TESTS = self.config_manager.get_connectivity_tests()
     
     def setup_networks(self):
         """Create Docker networks for the chain"""
@@ -125,12 +86,21 @@ class NetworkManager:
             
             # Test bridge connectivity from host
             log_info("Testing host → container connectivity...")
+            
+            # Get IP of chain-ingress from config_manager
+            containers = self.config_manager.get_containers()
+            ingress_ip = containers[0]["networks"]["underlay"] # Assuming ingress is the first container and has underlay network
+
+            if not ingress_ip:
+                log_error("Could not determine IP for chain-ingress")
+                return False
+
             result = subprocess.run([
-                "ping", "-c", "1", "-W", "2", "192.168.1.2"
+                "ping", "-c", "1", "-W", "2", ingress_ip
             ], capture_output=True, text=True)
             
             if result.returncode == 0:
-                log_success("Host can reach ingress container")
+                log_success(f"Host can reach ingress container ({ingress_ip})")
             else:
                 log_error("Host cannot reach ingress container")
                 return False
@@ -237,20 +207,21 @@ class NetworkManager:
                     issues_found.append(f"Missing network: {network['name']}")
             
             # Check container network assignments
-            containers = ["chain-ingress", "chain-vxlan", "chain-nat", "chain-ipsec", "chain-fragment", "chain-gcp"]
+            containers = self.config_manager.get_containers()
             
-            for container in containers:
+            for container_info in containers:
+                container_name = container_info["name"]
                 try:
                     result = subprocess.run([
-                        "docker", "inspect", container, 
+                        "docker", "inspect", container_name, 
                         "--format", "{{.NetworkSettings.Networks}}"
                     ], capture_output=True, text=True)
                     
                     if result.returncode != 0:
-                        issues_found.append(f"Container {container} not found")
+                        issues_found.append(f"Container {container_name} not found or inspect failed")
                         
                 except Exception:
-                    issues_found.append(f"Cannot inspect container {container}")
+                    issues_found.append(f"Cannot inspect container {container_name}")
             
             # Report findings
             if issues_found:

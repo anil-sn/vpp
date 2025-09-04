@@ -6,79 +6,155 @@ Handles Docker container lifecycle, VPP configuration, and debugging operations.
 
 import subprocess
 import time
-import json
 from pathlib import Path
+import yaml # Added for dynamic docker-compose.yml generation
 from .logger import get_logger, log_success, log_error, log_warning, log_info
+from .config_manager import ConfigManager
 
 class ContainerManager:
     """Manages Docker containers in the VPP chain"""
     
-    # Container definitions
-    CONTAINERS = [
-        {
-            "name": "chain-ingress",
-            "description": "VXLAN packet reception",
-            "config": "ingress-config.sh",
-            "networks": ["underlay", "chain-1-2"],
-            "ip_addresses": {"underlay": "192.168.1.2", "chain-1-2": "10.1.1.1"}
-        },
-        {
-            "name": "chain-vxlan",
-            "description": "VXLAN decapsulation",
-            "config": "vxlan-config.sh", 
-            "networks": ["chain-1-2", "chain-2-3"],
-            "ip_addresses": {"chain-1-2": "10.1.1.2", "chain-2-3": "10.1.2.1"}
-        },
-        {
-            "name": "chain-nat",
-            "description": "NAT44 translation",
-            "config": "nat-config.sh",
-            "networks": ["chain-2-3", "chain-3-4"],
-            "ip_addresses": {"chain-2-3": "10.1.2.2", "chain-3-4": "10.1.3.1"}
-        },
-        {
-            "name": "chain-ipsec", 
-            "description": "IPsec encryption",
-            "config": "ipsec-config.sh",
-            "networks": ["chain-3-4", "chain-4-5"],
-            "ip_addresses": {"chain-3-4": "10.1.3.2", "chain-4-5": "10.1.4.1"}
-        },
-        {
-            "name": "chain-fragment",
-            "description": "IP fragmentation", 
-            "config": "fragment-config.sh",
-            "networks": ["chain-4-5", "underlay"],
-            "ip_addresses": {"chain-4-5": "10.1.4.2", "underlay": "192.168.1.4"}
-        },
-        {
-            "name": "chain-gcp",
-            "description": "GCP destination endpoint",
-            "config": "gcp-config.sh",
-            "networks": ["underlay"],
-            "ip_addresses": {"underlay": "192.168.1.3"}
-        }
-    ]
-    
-    def __init__(self):
+    def __init__(self, config_manager: ConfigManager):
         self.logger = get_logger()
+        self.config_manager = config_manager
         self.project_root = Path(__file__).parent.parent.parent
-        
+        self.CONTAINERS = self.config_manager.get_containers()
+        self.NETWORKS = self.config_manager.get_networks()
+
+    def generate_docker_compose_file(self):
+        """Generates the docker-compose.yml file based on the current configuration"""
+        log_info("Generating docker-compose.yml...")
+        compose_data = {
+            "version": "3.8",
+            "services": {},
+            "networks": {},
+            "volumes": {
+                "vpp-logs": {"driver": "local"},
+                "packet-captures": {"driver": "local"}
+            }
+        }
+
+        # Add networks
+        for net in self.NETWORKS:
+            compose_data["networks"][net["name"]] = {
+                "driver": "bridge",
+                "ipam": {
+                    "config": [
+                        {"subnet": net["subnet"]}
+                    ]
+                }
+            }
+            if "gateway" in net:
+                compose_data["networks"][net["name"]]["ipam"]["config"][0]["gateway"] = net["gateway"]
+
+        # Add containers
+        for container in self.CONTAINERS:
+            service_name = container["name"]
+            networks_config = {}
+            for net_name, ip_address in container["networks"].items():
+                networks_config[net_name] = {"ipv4_address": ip_address}
+
+            depends_on = []
+            # Infer depends_on from the chain order defined in config.json
+            # Assumes a linear dependency where each container depends on the previous one.
+            current_index = self.CONTAINERS.index(container)
+            if current_index > 0:
+                depends_on.append(self.CONTAINERS[current_index - 1]["name"])
+
+            compose_data["services"][service_name] = {
+                "build": {
+                    "context": ".",
+                    "dockerfile": container["dockerfile"]
+                },
+                "container_name": service_name,
+                "hostname": service_name,
+                "privileged": True,
+                "volumes": [
+                    # Mount container-specific config directory. Assumes directory name matches container name after 'chain-'
+                    f"./src/containers/{service_name.replace('chain-', '')}:/vpp-config:ro",
+                    "./src/configs:/vpp-common:ro",
+                    "/tmp/vpp-logs:/var/log/vpp"
+                ],
+                "networks": networks_config,
+                "cap_add": [
+                    "NET_ADMIN",
+                    "SYS_ADMIN",
+                    "IPC_LOCK"
+                ],
+                "ulimits": {
+                    "memlock": {"soft": -1, "hard": -1}
+                },
+                "depends_on": depends_on
+            }
+            # Add packet-captures volume for chain-gcp
+            if service_name == "chain-gcp":
+                compose_data["services"][service_name]["volumes"].append("/tmp/packet-captures:/tmp")
+
+        compose_file_path = self.project_root / "docker-compose.yml"
+        temp_compose_file_path = Path("/tmp") / "docker-compose.yml"
+
+        try:
+            # Attempt to remove existing docker-compose.yml with sudo
+            if compose_file_path.exists():
+                log_info(f"Attempting to remove existing {compose_file_path}...")
+                subprocess.run([
+                    "sudo", "rm", "-f", str(compose_file_path)
+                ], capture_output=True, text=True, check=True)
+                log_success(f"Successfully removed existing {compose_file_path}")
+
+            with open(temp_compose_file_path, 'w') as f:
+                yaml.dump(compose_data, f, sort_keys=False)
+            log_success(f"docker-compose.yml generated at {temp_compose_file_path}")
+
+            # Use sudo mv to move the file to the project root
+            result = subprocess.run([
+                "sudo", "mv", str(temp_compose_file_path), str(compose_file_path)
+            ], capture_output=True, text=True, check=True)
+            log_success(f"docker-compose.yml moved to {compose_file_path}")
+            return True
+        except subprocess.CalledProcessError as e:
+            log_error(f"Failed to move docker-compose.yml: {e.stderr}")
+            return False
+        except Exception as e:
+            log_error(f"Error generating/moving docker-compose.yml: {e}")
+            return False
+
     def build_images(self):
         """Build container images"""
         try:
             log_info("Building VPP chain base image...")
             
-            dockerfile_path = self.project_root / "src" / "containers" / "Dockerfile.base"
+            base_dockerfile_path = self.project_root / "src" / "containers" / "Dockerfile.base"
             
             # Build base image
             result = subprocess.run([
                 "docker", "build", 
                 "-t", "vpp-chain-base:latest",
-                "-f", str(dockerfile_path),
+                "-f", str(base_dockerfile_path),
                 str(self.project_root)
             ], capture_output=True, text=True, check=True)
             
-            log_success("Container images built successfully")
+            log_success("VPP chain base image built successfully")
+
+            # Build specialized container images
+            # Assumes specialized Dockerfiles are named Dockerfile.<container_type> (e.g., Dockerfile.vxlan)
+            # and located in src/containers/<container_type>/
+            for container in self.CONTAINERS:
+                container_dockerfile_path = self.project_root / "src" / "containers" / container["name"].replace("chain-", "") / f"Dockerfile.{container['name'].replace('chain-', '')}"
+                
+                if container_dockerfile_path.exists():
+                    log_info(f"Building specialized image for {container['name']}...")
+                    result = subprocess.run([
+                        "docker", "build", 
+                        "-t", f"{container['name']}:latest",
+                        "-f", str(container_dockerfile_path),
+                        str(self.project_root)
+                    ], capture_output=True, text=True, check=True)
+                    log_success(f"Specialized image for {container['name']} built successfully")
+                else:
+                    log_info(f"No specialized Dockerfile found for {container['name']}, using base image.")
+            
+            log_success("All container images built successfully")
             return True
             
         except subprocess.CalledProcessError as e:
@@ -95,9 +171,9 @@ class ContainerManager:
             
             compose_file = self.project_root / "docker-compose.yml"
             
-            # Start containers
+            # Start containers using docker compose v2
             result = subprocess.run([
-                "docker-compose", "-f", str(compose_file),
+                "docker", "compose", "-f", str(compose_file),
                 "up", "-d"
             ], capture_output=True, text=True, check=True)
             
@@ -122,9 +198,9 @@ class ContainerManager:
             
             compose_file = self.project_root / "docker-compose.yml"
             
-            # Stop containers
+            # Stop containers using docker compose v2
             subprocess.run([
-                "docker-compose", "-f", str(compose_file),
+                "docker", "compose", "-f", str(compose_file),
                 "down", "--volumes", "--remove-orphans"
             ], capture_output=True, text=True)
             
@@ -327,8 +403,8 @@ class ContainerManager:
             while time.time() - start_time < duration:
                 print(f"\n⏱️ Monitoring... ({int(time.time() - start_time)}/{duration}s)")
                 
-                # Quick status check
-                for container in self.CONTAINERS[:3]:  # Monitor first 3 containers
+                # Quick status check - monitoring all containers
+                for container in self.CONTAINERS:
                     try:
                         result = subprocess.run([
                             "docker", "exec", container["name"],
@@ -368,6 +444,14 @@ class ContainerManager:
             subprocess.run([
                 "docker", "image", "rm", "vpp-chain-base:latest"
             ], capture_output=True, text=True)
+
+            for container in self.CONTAINERS:
+                try:
+                    subprocess.run([
+                        "docker", "image", "rm", f"{container['name']}:latest"
+                    ], capture_output=True, text=True)
+                except:
+                    pass
             
             # System cleanup
             subprocess.run([

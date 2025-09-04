@@ -1,0 +1,22 @@
+# Fragment-specific container build
+FROM vpp-chain-base:latest
+
+# Install fragmentation-specific tools
+RUN apt-get update && apt-get install -y \
+    mtr-tiny \
+    traceroute \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy fragment-specific configurations
+COPY src/containers/fragment/fragment-advanced.conf /etc/vpp/fragment-advanced.conf
+
+# Fragment-specific environment
+ENV VPP_FRAGMENT_MTU=1400
+ENV VPP_FRAGMENT_TIMEOUT=30
+
+# Fragment monitoring script
+COPY src/containers/fragment/monitor-fragmentation.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/monitor-fragmentation.sh
+
+LABEL purpose="IP packet fragmentation container"
+LABEL mtu="1400"

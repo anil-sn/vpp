@@ -5,7 +5,6 @@ Provides centralized logging functionality with both console and file output.
 """
 
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 

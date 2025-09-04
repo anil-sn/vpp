@@ -1,0 +1,29 @@
+# GCP endpoint-specific container build
+FROM vpp-chain-base:latest
+
+# Install GCP/endpoint-specific tools
+RUN apt-get update && apt-get install -y \
+    tcpdump \
+    wireshark-common \
+    netcat-openbsd \
+    iperf3 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy GCP-specific configurations
+COPY src/containers/gcp/gcp-advanced.conf /etc/vpp/gcp-advanced.conf
+
+# GCP-specific environment
+ENV VPP_GCP_ENDPOINT=10.0.3.1
+ENV VPP_CAPTURE_PATH=/tmp/gcp-received.pcap
+
+# Packet capture and analysis scripts
+COPY src/containers/gcp/capture-packets.sh /usr/local/bin/
+COPY src/containers/gcp/analyze-packets.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/*.sh
+
+# Create capture directory
+RUN mkdir -p /tmp/captures
+
+LABEL purpose="GCP destination endpoint container"
+LABEL services="packet-capture,reassembly,analysis"

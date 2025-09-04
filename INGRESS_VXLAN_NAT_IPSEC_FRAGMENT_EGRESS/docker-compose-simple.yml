@@ -1,0 +1,68 @@
+# Simplified VPP Multi-Container Chain for Testing
+# Architecture: INGRESS → VXLAN → NAT → GCP
+
+services:
+  # Container 1: INGRESS - Receives traffic
+  chain-ingress:
+    build:
+      context: .
+      dockerfile: src/containers/Dockerfile.base
+    container_name: chain-ingress
+    hostname: chain-ingress
+    privileged: true
+    volumes:
+      - ./src/configs:/vpp-config:ro
+      - /tmp/vpp-logs:/var/log/vpp
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - IPC_LOCK
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+  # Container 2: VXLAN - Decapsulates VXLAN packets  
+  chain-vxlan:
+    build:
+      context: .
+      dockerfile: src/containers/Dockerfile.base
+    container_name: chain-vxlan
+    hostname: chain-vxlan
+    privileged: true
+    volumes:
+      - ./src/configs:/vpp-config:ro
+      - /tmp/vpp-logs:/var/log/vpp
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - IPC_LOCK
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    depends_on:
+      - chain-ingress
+
+  # Container 3: GCP - Destination Endpoint
+  chain-gcp:
+    build:
+      context: .
+      dockerfile: src/containers/Dockerfile.base
+    container_name: chain-gcp
+    hostname: chain-gcp
+    privileged: true
+    volumes:
+      - ./src/configs:/vpp-config:ro
+      - /tmp/vpp-logs:/var/log/vpp
+      - /tmp/packet-captures:/tmp
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - IPC_LOCK
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    depends_on:
+      - chain-vxlan

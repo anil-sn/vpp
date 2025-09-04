@@ -54,27 +54,38 @@ class NetworkManager:
             return False
     
     def cleanup_networks(self):
-        """Remove all Docker networks"""
+        """Remove all Docker networks related to the project."""
         try:
             log_info("Cleaning up Docker networks...")
-            
+
+            # Remove networks defined in config
             for network in self.NETWORKS:
                 try:
-                    subprocess.run([
-                        "docker", "network", "rm", network["name"]
-                    ], capture_output=True, text=True)
-                    log_success(f"Network {network['name']} removed")
-                except:
-                    log_warning(f"Failed to remove network {network['name']} (may not exist)")
-            
-            # Clean up orphaned networks
-            subprocess.run([
-                "docker", "network", "prune", "-f"
-            ], capture_output=True, text=True)
-            
-            log_success("Network cleanup completed")
+                    subprocess.run(["docker", "network", "rm", network["name"]], capture_output=True, text=True)
+                    log_success(f"Network {network['name']} removed.")
+                except Exception:
+                    log_warning(f"Failed to remove network {network['name']} (may not exist or in use).")
+
+            # Remove any networks matching the project's docker-compose naming convention
+            # This is a fallback for networks created by docker-compose previously
+            project_network_prefix = "ingress_vxlan_nat_ipsec_fragment_egress_"
+            result = subprocess.run(["docker", "network", "ls", "--format", "{{.Name}}"], capture_output=True, text=True, check=True)
+            all_networks = result.stdout.strip().split('\n')
+
+            for net_name in all_networks:
+                if net_name.startswith(project_network_prefix):
+                    try:
+                        subprocess.run(["docker", "network", "rm", net_name], capture_output=True, text=True)
+                        log_success(f"Orphaned network {net_name} removed.")
+                    except Exception:
+                        log_warning(f"Failed to remove orphaned network {net_name} (may be in use).")
+
+            # Clean up orphaned networks (general Docker prune)
+            subprocess.run(["docker", "network", "prune", "-f"], capture_output=True, text=True)
+
+            log_success("Network cleanup completed.")
             return True
-            
+
         except Exception as e:
             log_error(f"Network cleanup failed: {e}")
             return False

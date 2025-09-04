@@ -164,58 +164,103 @@ class ContainerManager:
             log_error(f"Image build failed: {e}")
             return False
     
-    def start_containers(self):
-        """Start all containers using docker-compose"""
-        try:
-            log_info("Starting container chain...")
-            
-            compose_file = self.project_root / "docker-compose.yml"
-            
-            # Start containers using docker compose v2
-            result = subprocess.run([
-                "docker", "compose", "-f", str(compose_file),
-                "up", "-d"
+    def _run_single_container(self, container_info):
+        """Helper to run a single container and apply its VPP config."""
+        container_name = container_info["name"]
+        log_info(f"Starting {container_name}...")
+
+        # Construct docker run command
+        run_command = [
+            "docker", "run", "-d",
+            "--name", container_name,
+            "-h", container_name,
+            "--privileged"
+        ]
+
+        # Add capabilities
+        for cap in ["NET_ADMIN", "SYS_ADMIN", "IPC_LOCK"]:
+            run_command.extend(["--cap-add", cap])
+
+        # Add ulimits
+        run_command.extend(["--ulimit", "memlock=-1:-1"])
+
+        # Add volumes
+        container_type = container_name.replace("chain-", "")
+        run_command.extend([
+            "-v", f"{self.project_root}/src/containers/{container_type}:/vpp-config:ro",
+            "-v", f"{self.project_root}/src/configs:/vpp-common:ro",
+            "-v", "/tmp/vpp-logs:/var/log/vpp"
+        ])
+        if container_name == "chain-gcp":
+            run_command.extend(["-v", "/tmp/packet-captures:/tmp"])
+
+        # Add primary network and IP
+        primary_network_name = list(container_info["networks"].keys())[0]
+        primary_ip_address = container_info["networks"][primary_network_name]
+        run_command.extend(["--network", primary_network_name, "--ip", primary_ip_address])
+
+        # Add image name
+        run_command.append(f"{container_name}:latest")
+
+        # Execute docker run
+        subprocess.run(run_command, capture_output=True, text=True, check=True)
+        log_success(f"{container_name} started.")
+
+        # Connect to secondary networks
+        secondary_networks = list(container_info["networks"].keys())[1:]
+        for secondary_net_name in secondary_networks:
+            secondary_ip_address = container_info["networks"][secondary_net_name]
+            log_info(f"Connecting {container_name} to {secondary_net_name} with IP {secondary_ip_address}...")
+            subprocess.run([
+                "docker", "network", "connect",
+                "--ip", secondary_ip_address,
+                secondary_net_name,
+                container_name
             ], capture_output=True, text=True, check=True)
-            
-            # Wait for containers to initialize
-            log_info("Waiting for containers to initialize...")
-            time.sleep(15)
-            
-            log_success("Containers started successfully")
+            log_success(f"{container_name} connected to {secondary_net_name}.")
+
+        # Start VPP and apply config
+        log_info(f"Starting VPP and applying configuration for {container_name}...")
+        subprocess.run([
+            "docker", "exec", container_name, "bash", "-c",
+            "/vpp-common/start-vpp.sh &"
+        ], capture_output=True, text=True, check=True)
+        time.sleep(10) # Give VPP some time to start
+        subprocess.run([
+            "docker", "exec", container_name, "bash", "-c",
+            f"cd /vpp-config && ./{container_info['config']}"
+        ], capture_output=True, text=True, check=True)
+        log_success(f"VPP configured for {container_name}.")
+
+    def _stop_single_container(self, container_name):
+        """Helper to stop and remove a single container."""
+        log_info(f"Stopping and removing {container_name}...")
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, text=True)
+        log_success(f"{container_name} stopped and removed.")
+
+    def start_containers(self):
+        """Start all containers manually using docker run commands."""
+        try:
+            log_info("Starting container chain manually...")
+            for container_info in self.CONTAINERS:
+                self._run_single_container(container_info)
+            log_success("All containers started and configured successfully!")
             return True
-            
         except subprocess.CalledProcessError as e:
-            log_error(f"Failed to start containers: {e.stderr}")
+            log_error(f"Failed to start or configure containers: {e.stderr}")
             return False
         except Exception as e:
             log_error(f"Container startup failed: {e}")
             return False
-    
+
     def stop_containers(self):
-        """Stop and remove all containers"""
+        """Stop and remove all containers."""
         try:
-            log_info("Stopping container chain...")
-            
-            compose_file = self.project_root / "docker-compose.yml"
-            
-            # Stop containers using docker compose v2
-            subprocess.run([
-                "docker", "compose", "-f", str(compose_file),
-                "down", "--volumes", "--remove-orphans"
-            ], capture_output=True, text=True)
-            
-            # Force remove any remaining containers
-            for container in self.CONTAINERS:
-                try:
-                    subprocess.run([
-                        "docker", "rm", "-f", container["name"]
-                    ], capture_output=True, text=True)
-                except:
-                    pass
-            
-            log_success("Containers stopped successfully")
+            log_info("Stopping and removing container chain...")
+            for container_info in reversed(self.CONTAINERS):
+                self._stop_single_container(container_info["name"])
+            log_success("All containers stopped and removed.")
             return True
-            
         except Exception as e:
             log_error(f"Container cleanup failed: {e}")
             return False

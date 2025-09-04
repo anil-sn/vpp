@@ -4,34 +4,40 @@
     "gcp": {
       "networks": [
         {
-          "name": "underlay",
-          "subnet": "192.168.1.0/24",
-          "gateway": "192.168.1.1",
-          "description": "Main underlay network"
+          "name": "external-ingress",
+          "subnet": "172.20.0.0/24",
+          "gateway": "172.20.0.1",
+          "description": "External network for Ingress"
         },
         {
-          "name": "chain-1-2",
-          "subnet": "10.1.1.0/24",
-          "gateway": "10.1.1.1",
+          "name": "ingress-vxlan",
+          "subnet": "172.20.1.0/24",
+          "gateway": "172.20.1.1",
           "description": "Ingress → VXLAN"
         },
         {
-          "name": "chain-2-3",
-          "subnet": "10.1.2.0/24",
-          "gateway": "10.1.2.1",
+          "name": "vxlan-nat",
+          "subnet": "172.20.2.0/24",
+          "gateway": "172.20.2.1",
           "description": "VXLAN → NAT"
         },
         {
-          "name": "chain-3-4",
-          "subnet": "10.1.3.0/24",
-          "gateway": "10.1.3.1",
+          "name": "nat-ipsec",
+          "subnet": "172.20.3.0/24",
+          "gateway": "172.20.3.1",
           "description": "NAT → IPsec"
         },
         {
-          "name": "chain-4-5",
-          "subnet": "10.1.4.0/24",
-          "gateway": "10.1.4.1",
+          "name": "ipsec-fragment",
+          "subnet": "172.20.4.0/24",
+          "gateway": "172.20.4.1",
           "description": "IPsec → Fragment"
+        },
+        {
+          "name": "fragment-gcp",
+          "subnet": "172.20.5.0/24",
+          "gateway": "172.20.5.1",
+          "description": "Fragment → GCP"
         }
       ],
       "containers": [
@@ -41,8 +47,8 @@
           "config": "ingress-config.sh",
           "dockerfile": "src/containers/ingress/Dockerfile.ingress",
           "networks": {
-            "underlay": "192.168.10.10",
-            "chain-1-2": "10.1.1.1"
+            "external-ingress": "172.20.0.10",
+            "ingress-vxlan": "172.20.1.10"
           }
         },
         {
@@ -51,8 +57,8 @@
           "config": "vxlan-config.sh",
           "dockerfile": "src/containers/vxlan/Dockerfile.vxlan",
           "networks": {
-            "chain-1-2": "10.1.1.2",
-            "chain-2-3": "10.1.2.1"
+            "ingress-vxlan": "172.20.1.20",
+            "vxlan-nat": "172.20.2.10"
           }
         },
         {
@@ -61,8 +67,8 @@
           "config": "nat-config.sh",
           "dockerfile": "src/containers/Dockerfile.base",
           "networks": {
-            "chain-2-3": "10.1.2.2",
-            "chain-3-4": "10.1.3.1"
+            "vxlan-nat": "172.20.2.20",
+            "nat-ipsec": "172.20.3.10"
           }
         },
         {
@@ -71,8 +77,8 @@
           "config": "ipsec-config.sh",
           "dockerfile": "src/containers/ipsec/Dockerfile.ipsec",
           "networks": {
-            "chain-3-4": "10.1.3.2",
-            "chain-4-5": "10.1.4.1"
+            "nat-ipsec": "172.20.3.20",
+            "ipsec-fragment": "172.20.4.10"
           }
         },
         {
@@ -81,8 +87,8 @@
           "config": "fragment-config.sh",
           "dockerfile": "src/containers/fragment/Dockerfile.fragment",
           "networks": {
-            "chain-4-5": "10.1.4.2",
-            "underlay": "192.168.10.20"
+            "ipsec-fragment": "172.20.4.20",
+            "fragment-gcp": "172.20.5.10"
           }
         },
         {
@@ -91,39 +97,39 @@
           "config": "gcp-config.sh",
           "dockerfile": "src/containers/Dockerfile.base",
           "networks": {
-            "underlay": "192.168.10.30"
+            "fragment-gcp": "172.20.5.20"
           }
         }
       ],
       "connectivity_tests": [
         {
           "from": "chain-ingress",
-          "to": "10.1.1.2",
+          "to": "172.20.1.20",
           "description": "Ingress → VXLAN"
         },
         {
           "from": "chain-vxlan",
-          "to": "10.1.2.2",
+          "to": "172.20.2.20",
           "description": "VXLAN → NAT"
         },
         {
           "from": "chain-nat",
-          "to": "10.1.3.2",
+          "to": "172.20.3.20",
           "description": "NAT → IPsec"
         },
         {
           "from": "chain-ipsec",
-          "to": "10.1.4.2",
+          "to": "172.20.4.20",
           "description": "IPsec → Fragment"
         },
         {
           "from": "chain-fragment",
-          "to": "192.168.1.3",
+          "to": "172.20.5.20",
           "description": "Fragment → GCP"
         }
       ],
       "traffic_config": {
-        "bridge_ip": "192.168.1.1",
+        "bridge_ip": "172.20.0.1",
         "vxlan_port": 4789,
         "vxlan_vni": 100,
         "inner_src_ip": "10.10.10.5",

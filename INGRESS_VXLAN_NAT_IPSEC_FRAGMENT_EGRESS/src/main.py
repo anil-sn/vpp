@@ -36,66 +36,58 @@ class VPPChainManager:
     def setup(self, force_rebuild=False):
         """Setup the multi-container chain environment"""
         log_info("Starting VPP multi-container chain setup")
-        
+
         try:
             # Cleanup existing environment if needed
             if force_rebuild:
                 self.cleanup()
-            
+
             # Build container images
             log_info("Building container images...")
             if not self.container_manager.build_images():
                 log_error("Failed to build container images")
                 return False
-            
-            # Generate docker-compose.yml
-            log_info("Generating docker-compose.yml...")
-            if not self.container_manager.generate_docker_compose_file():
-                log_error("Failed to generate docker-compose.yml")
+
+            # Setup networks
+            log_info("Setting up networks...")
+            if not self.network_manager.setup_networks():
+                log_error("Failed to set up networks")
                 return False
 
-            # Start containers
+            # Start containers (this now includes VPP startup and config application)
             log_info("Starting containers...")
             if not self.container_manager.start_containers():
                 log_error("Failed to start containers")
                 return False
-            
-            # Wait for startup
-            log_info("Waiting for containers to fully initialize...")
-            import time # Local import for time.sleep
-            time.sleep(30)
-            
-            # Apply VPP configurations
-            log_info("Applying VPP configurations...")
-            if not self.container_manager.apply_configs():
-                log_error("Failed to apply VPP configurations")
-                return False
-            
+
             # Verify setup
             log_info("Verifying setup...")
             if not self.verify_setup():
                 log_error("Setup verification failed")
                 return False
-            
+
             log_success("VPP multi-container chain setup completed successfully!")
             self._print_chain_status()
             return True
-            
+
         except Exception as e:
             log_error(f"Setup failed with exception: {e}")
             return False
-    
+
     def cleanup(self):
         """Cleanup the multi-container chain environment"""
         log_info("Starting VPP multi-container chain cleanup")
-        
+
         try:
             # Stop and remove containers
             self.container_manager.stop_containers()
-            
+
+            # Clean up networks
+            self.network_manager.cleanup_networks()
+
             log_success("VPP multi-container chain cleanup completed!")
             return True
-            
+
         except Exception as e:
             log_error(f"Cleanup failed with exception: {e}")
             return False

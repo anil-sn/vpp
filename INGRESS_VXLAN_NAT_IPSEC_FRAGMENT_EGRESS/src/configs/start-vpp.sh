@@ -7,7 +7,7 @@ echo "--- Starting VPP in $HOSTNAME ---"
 mkdir -p /var/log/vpp /run/vpp /etc/vpp
 
 # Copy startup configuration
-cp /vpp-config/startup.conf /etc/vpp/startup.conf
+cp /vpp-common/startup.conf /etc/vpp/startup.conf
 
 # Start VPP with startup configuration
 vpp -c /etc/vpp/startup.conf &
@@ -44,27 +44,27 @@ vppctl show interface
 case "$HOSTNAME" in
     "chain-ingress")
         echo "Loading INGRESS configuration..."
-        /vpp-config/ingress-config.sh
+        /vpp-config/new-ingress-config.sh
         ;;
     "chain-vxlan")
         echo "Loading VXLAN configuration..."
-        /vpp-config/vxlan-config.sh
+        /vpp-config/new-vxlan-config.sh
         ;;
     "chain-nat")
         echo "Loading NAT configuration..."
-        /vpp-config/nat-config.sh
+        /vpp-config/new-nat-config.sh
         ;;
     "chain-ipsec")
         echo "Loading IPsec configuration..."
-        /vpp-config/ipsec-config.sh
+        /vpp-config/new-ipsec-config.sh
         ;;
     "chain-fragment")
         echo "Loading Fragment configuration..."
-        /vpp-config/fragment-config.sh
+        /vpp-config/new-fragment-config.sh
         ;;
     "chain-gcp")
         echo "Loading GCP configuration..."
-        /vpp-config/gcp-config.sh
+        /vpp-config/new-gcp-config.sh
         ;;
     *)
         echo "Unknown hostname: $HOSTNAME"

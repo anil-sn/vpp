@@ -1,51 +1,36 @@
 #!/bin/bash
 set -e
 
-echo "--- Configuring NAT Container (Fixed) ---"
+echo "--- Configuring NAT Container ---"
 
-# Create interface from VXLAN container
+# Create interfaces
 vppctl create host-interface name eth0
 vppctl set interface ip address host-eth0 172.20.2.20/24
 vppctl set interface state host-eth0 up
 
-# Create interface to IPsec container  
-vppctl create host-interface name eth1
+vppctl create host-interface name eth1  
 vppctl set interface ip address host-eth1 172.20.3.10/24
 vppctl set interface state host-eth1 up
 
-# Configure NAT44
-vppctl nat44 plugin enable
+# Enable NAT44 plugin
+vppctl nat44 plugin enable sessions 1024
 
-# Configure interfaces for NAT
+# Configure NAT interfaces
 vppctl set interface nat44 in host-eth0
 vppctl set interface nat44 out host-eth1
 
-# Add NAT44 address pool using the outside interface IP
+# Add address pool
 vppctl nat44 add address 172.20.3.10
 
-# Add static NAT mapping for specific traffic
-# Map 10.10.10.10:2055 to 172.20.3.10:2055 for UDP traffic
+# Add static mapping for the test traffic
 vppctl nat44 add static mapping udp local 10.10.10.10 2055 external 172.20.3.10 2055
 
 # Set up routing
-# Route to previous container (VXLAN)
-vppctl ip route add 172.20.1.0/24 via 172.20.2.10
+vppctl ip route add 10.10.10.0/24 via 172.20.2.10 host-eth0
+vppctl ip route add 172.20.4.0/24 via 172.20.3.20 host-eth1
 
-# Route to next container (IPsec)
-vppctl ip route add 172.20.4.0/24 via 172.20.3.20
-
-# Route inner network traffic
-vppctl ip route add 10.10.10.0/24 via 172.20.2.10
-
-echo "--- NAT Interfaces (Fixed) ---"
+echo "--- NAT configuration completed ---"
 vppctl show interface addr
-
-echo "--- NAT44 Configuration (Fixed) ---"
 vppctl show nat44 addresses
-vppctl show nat44 static mappings  
-vppctl show nat44 interfaces
-
-echo "--- NAT Routes (Fixed) ---"
+vppctl show nat44 static mappings
 vppctl show ip fib
-
-echo "--- NAT Fixed configuration completed ---"

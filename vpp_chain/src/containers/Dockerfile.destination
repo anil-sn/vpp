@@ -1,0 +1,85 @@
+# VPP Multi-Container Chain - Destination Container
+FROM ubuntu:20.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install VPP and essential tools
+RUN apt-get update && \
+    apt-get install -y \
+    curl \
+    gnupg \
+    lsb-release \
+    software-properties-common \
+    && curl -fsSL https://packagecloud.io/fdio/release/gpgkey | apt-key add - \
+    && add-apt-repository "deb [arch=amd64] https://packagecloud.io/fdio/release/ubuntu $(lsb_release -sc) main" \
+    && apt-get update \
+    && apt-get install -y \
+    vpp=24.10-release \
+    vpp-plugin-core=24.10-release \
+    vpp-plugin-dpdk=24.10-release \
+    python3-vpp-api=24.10-release \
+    vpp-dev=24.10-release \
+    && apt-get install -y \
+    python3-scapy \
+    tcpdump \
+    tshark \
+    wireshark \
+    net-tools \
+    iproute2 \
+    jq \
+    iputils-ping \
+    curl \
+    vim \
+    --no-install-recommends \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create VPP directories
+RUN mkdir -p /etc/vpp /var/log/vpp /run/vpp /vpp-config /tmp \
+    && chmod 755 /etc/vpp /var/log/vpp /run/vpp
+
+# Copy VPP configuration
+COPY src/containers/destination-config.sh /vpp-config/
+RUN chmod +x /vpp-config/destination-config.sh
+
+# Create VPP startup configuration for destination processing
+RUN echo "unix {" > /etc/vpp/startup.conf && \
+    echo "  nodaemon" >> /etc/vpp/startup.conf && \
+    echo "  log /var/log/vpp/vpp.log" >> /etc/vpp/startup.conf && \
+    echo "  full-coredump" >> /etc/vpp/startup.conf && \
+    echo "  cli-listen /run/vpp/cli.sock" >> /etc/vpp/startup.conf && \
+    echo "  gid vpp" >> /etc/vpp/startup.conf && \
+    echo "}" >> /etc/vpp/startup.conf && \
+    echo "api-trace {" >> /etc/vpp/startup.conf && \
+    echo "  on" >> /etc/vpp/startup.conf && \
+    echo "}" >> /etc/vpp/startup.conf && \
+    echo "api-segment {" >> /etc/vpp/startup.conf && \
+    echo "  gid vpp" >> /etc/vpp/startup.conf && \
+    echo "}" >> /etc/vpp/startup.conf && \
+    echo "socksvr {" >> /etc/vpp/startup.conf && \
+    echo "  default" >> /etc/vpp/startup.conf && \
+    echo "}" >> /etc/vpp/startup.conf && \
+    echo "memory {" >> /etc/vpp/startup.conf && \
+    echo "  main-heap-size 256M" >> /etc/vpp/startup.conf && \
+    echo "  main-heap-page-size 2M" >> /etc/vpp/startup.conf && \
+    echo "}" >> /etc/vpp/startup.conf && \
+    echo "buffers {" >> /etc/vpp/startup.conf && \
+    echo "  buffers-per-numa 16384" >> /etc/vpp/startup.conf && \
+    echo "}" >> /etc/vpp/startup.conf && \
+    echo "plugins {" >> /etc/vpp/startup.conf && \
+    echo "  plugin af_packet_plugin.so { enable }" >> /etc/vpp/startup.conf && \
+    echo "  plugin ipsec_plugin.so { enable }" >> /etc/vpp/startup.conf && \
+    echo "  plugin crypto_native_plugin.so { enable }" >> /etc/vpp/startup.conf && \
+    echo "  plugin ipip_plugin.so { enable }" >> /etc/vpp/startup.conf && \
+    echo "  plugin tap_plugin.so { enable }" >> /etc/vpp/startup.conf && \
+    echo "}"  >> /etc/vpp/startup.conf
+
+# Set working directory
+WORKDIR /vpp-config
+
+# Expose VPP management ports
+EXPOSE 5002
+
+# Keep container running and allow manual startup
+CMD ["tail", "-f", "/dev/null"]

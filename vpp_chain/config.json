@@ -4,45 +4,30 @@
     "gcp": {
       "networks": [
         {
-          "name": "external-ingress",
+          "name": "external-traffic",
           "subnet": "172.20.0.0/24",
           "gateway": "172.20.0.1"
         },
         {
-          "name": "ingress-vxlan",
+          "name": "vxlan-processing",
           "subnet": "172.20.1.0/24",
           "gateway": "172.20.1.1"
         },
         {
-          "name": "vxlan-nat",
+          "name": "processing-destination",
           "subnet": "172.20.2.0/24",
           "gateway": "172.20.2.1"
-        },
-        {
-          "name": "nat-ipsec",
-          "subnet": "172.20.3.0/24",
-          "gateway": "172.20.3.1"
-        },
-        {
-          "name": "ipsec-fragment",
-          "subnet": "172.20.4.0/24",
-          "gateway": "172.20.4.1"
-        },
-        {
-          "name": "fragment-gcp",
-          "subnet": "172.20.5.0/24",
-          "gateway": "172.20.5.1"
         }
       ],
       "containers": {
-        "chain-ingress": {
-          "description": "VXLAN packet reception",
-          "dockerfile": "src/containers/ingress/Dockerfile.ingress",
-          "config_script": "ingress-config.sh",
+        "vxlan-processor": {
+          "description": "VXLAN decapsulation and forwarding",
+          "dockerfile": "src/containers/Dockerfile.vxlan",
+          "config_script": "src/containers/vxlan-config.sh",
           "interfaces": [
             {
               "name": "eth0",
-              "network": "external-ingress",
+              "network": "external-traffic",
               "ip": {
                 "address": "172.20.0.10",
                 "mask": 24
@@ -50,17 +35,22 @@
             },
             {
               "name": "eth1",
-              "network": "ingress-vxlan",
+              "network": "vxlan-processing",
               "ip": {
                 "address": "172.20.1.10",
                 "mask": 24
               }
             }
           ],
-          "bridge_domain_id": 1,
+          "vxlan_tunnel": {
+            "src": "172.20.0.10",
+            "dst": "172.20.0.1",
+            "vni": 100,
+            "decap_next": "l2-input"
+          },
           "routes": [
             {
-              "to": "172.20.1.20/32",
+              "to": "10.10.10.0/24",
               "via": "172.20.1.20",
               "interface": "eth1"
             },
@@ -71,14 +61,14 @@
             }
           ]
         },
-        "chain-vxlan": {
-          "description": "VXLAN decapsulation",
-          "dockerfile": "src/containers/vxlan/Dockerfile.vxlan",
-          "config_script": "vxlan-config.sh",
+        "security-processor": {
+          "description": "Consolidated NAT44 + IPsec + IP Fragmentation processing",
+          "dockerfile": "src/containers/Dockerfile.security",
+          "config_script": "src/containers/security-config.sh",
           "interfaces": [
             {
               "name": "eth0",
-              "network": "ingress-vxlan",
+              "network": "vxlan-processing",
               "ip": {
                 "address": "172.20.1.20",
                 "mask": 24
@@ -86,46 +76,12 @@
             },
             {
               "name": "eth1",
-              "network": "vxlan-nat",
+              "network": "processing-destination",
               "ip": {
                 "address": "172.20.2.10",
                 "mask": 24
-              }
-            }
-          ],
-          "vxlan_tunnel": {
-            "src": "172.20.1.20",
-            "dst": "172.20.1.10",
-            "vni": 100
-          },
-          "routes": [
-            {
-              "to": "10.10.10.0/24",
-              "via": "172.20.2.20",
-              "interface": "eth1"
-            }
-          ]
-        },
-        "chain-nat": {
-          "description": "NAT44 translation",
-          "dockerfile": "src/containers/Dockerfile.base",
-          "config_script": "nat-config.sh",
-          "interfaces": [
-            {
-              "name": "eth0",
-              "network": "vxlan-nat",
-              "ip": {
-                "address": "172.20.2.20",
-                "mask": 24
-              }
-            },
-            {
-              "name": "eth1",
-              "network": "nat-ipsec",
-              "ip": {
-                "address": "172.20.3.10",
-                "mask": 24
-              }
+              },
+              "mtu": 1400
             }
           ],
           "nat44": {
@@ -133,33 +89,12 @@
             "static_mapping": {
               "local_ip": "10.10.10.10",
               "local_port": 2055,
-              "external_ip": "172.20.3.10",
+              "external_ip": "172.20.2.10",
               "external_port": 2055
-            }
-          }
-        },
-        "chain-ipsec": {
-          "description": "IPsec encryption",
-          "dockerfile": "src/containers/ipsec/Dockerfile.ipsec",
-          "config_script": "ipsec-config.sh",
-          "interfaces": [
-            {
-              "name": "eth0",
-              "network": "nat-ipsec",
-              "ip": {
-                "address": "172.20.3.20",
-                "mask": 24
-              }
             },
-            {
-              "name": "eth1",
-              "network": "ipsec-fragment",
-              "ip": {
-                "address": "172.20.4.10",
-                "mask": 24
-              }
-            }
-          ],
+            "inside_interface": "eth0",
+            "outside_interface": "eth1"
+          },
           "ipsec": {
             "sa_in": {
               "id": 2000,
@@ -174,60 +109,38 @@
               "crypto_key": "4a506a794f574265564551694d653768"
             },
             "tunnel": {
-              "src": "172.20.3.20",
-              "dst": "172.20.4.20",
-              "local_ip": "10.100.100.1/30"
+              "src": "172.20.1.20",
+              "dst": "172.20.2.20",
+              "local_ip": "10.100.100.1/30",
+              "remote_ip": "10.100.100.2/30"
             }
+          },
+          "fragmentation": {
+            "mtu": 1400,
+            "enable": true
           },
           "routes": [
             {
               "to": "172.20.2.0/24",
-              "via": "172.20.3.10"
+              "via": "172.20.2.1",
+              "interface": "eth1"
             },
             {
-              "to": "172.20.5.0/24",
-              "via": "ipip0"
-            },
-            {
-              "to": "172.20.0.0/24",
+              "to": "10.0.3.0/24",
               "via": "ipip0"
             }
           ]
         },
-        "chain-fragment": {
-          "description": "IP fragmentation",
-          "dockerfile": "src/containers/fragment/Dockerfile.fragment",
-          "config_script": "fragment-config.sh",
+        "destination": {
+          "description": "Destination endpoint with TAP interface and packet capture",
+          "dockerfile": "src/containers/Dockerfile.destination",
+          "config_script": "src/containers/destination-config.sh",
           "interfaces": [
             {
               "name": "eth0",
-              "network": "ipsec-fragment",
+              "network": "processing-destination",
               "ip": {
-                "address": "172.20.4.20",
-                "mask": 24
-              }
-            },
-            {
-              "name": "eth1",
-              "network": "fragment-gcp",
-              "ip": {
-                "address": "172.20.5.10",
-                "mask": 24
-              },
-              "mtu": 1400
-            }
-          ]
-        },
-        "chain-gcp": {
-          "description": "GCP destination endpoint",
-          "dockerfile": "src/containers/Dockerfile.base",
-          "config_script": "gcp-config.sh",
-          "interfaces": [
-            {
-              "name": "eth0",
-              "network": "fragment-gcp",
-              "ip": {
-                "address": "172.20.5.20",
+                "address": "172.20.2.20",
                 "mask": 24
               }
             }
@@ -237,49 +150,52 @@
             "name": "vpp-tap0",
             "ip": "10.0.3.1/24",
             "linux_ip": "10.0.3.2/24",
-            "pcap_file": "/tmp/gcp-received.pcap"
+            "pcap_file": "/tmp/destination-received.pcap",
+            "rx_mode": "interrupt"
+          },
+          "ipsec": {
+            "sa_in": {
+              "id": 1000,
+              "spi": 1000,
+              "crypto_alg": "aes-gcm-128",
+              "crypto_key": "4a506a794f574265564551694d653768"
+            },
+            "tunnel": {
+              "local_ip": "10.100.100.2/30"
+            }
           },
           "routes": [
             {
               "to": "0.0.0.0/0",
-              "via": "172.20.5.1"
+              "via": "172.20.2.1"
             },
             {
               "to": "10.0.3.0/24",
               "via": "tap0"
+            },
+            {
+              "to": "10.100.100.0/30",
+              "via": "ipip0"
             }
           ]
         }
       },
       "connectivity_tests": [
         {
-          "from": "chain-ingress",
+          "from": "vxlan-processor",
           "to": "172.20.1.20",
-          "description": "Ingress → VXLAN"
+          "description": "VXLAN → Security Processor"
         },
         {
-          "from": "chain-vxlan",
+          "from": "security-processor", 
           "to": "172.20.2.20",
-          "description": "VXLAN → NAT"
-        },
-        {
-          "from": "chain-nat",
-          "to": "172.20.3.20",
-          "description": "NAT → IPsec"
-        },
-        {
-          "from": "chain-ipsec",
-          "to": "172.20.4.20",
-          "description": "IPsec → Fragment"
-        },
-        {
-          "from": "chain-fragment",
-          "to": "172.20.5.20",
-          "description": "Fragment → GCP"
+          "description": "Security Processor → Destination"
         }
       ],
       "traffic_config": {
-        "bridge_ip": "172.20.0.1",
+        "vxlan_ip": "172.20.0.10",
+        "security_ip": "172.20.1.20", 
+        "destination_ip": "172.20.2.20",
         "vxlan_port": 4789,
         "vxlan_vni": 100,
         "inner_src_ip": "10.10.10.5",
@@ -287,7 +203,13 @@
         "inner_dst_port": 2055,
         "packet_count": 10,
         "packet_size": 8000,
-        "test_duration": 10
+        "test_duration": 10,
+        "expected_transformations": [
+          "VXLAN decapsulation (vxlan-processor)",
+          "NAT44 translation (security-processor)",
+          "IPsec encryption (security-processor)",
+          "IP fragmentation (security-processor)"
+        ]
       }
     }
   }

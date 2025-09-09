@@ -152,29 +152,33 @@ class VPPChainManager:
         containers = self.config_manager.get_containers()
         traffic_config = self.config_manager.get_traffic_config()
         
-        # Get ingress IP
-        ingress_ip = "N/A"
-        for interface in containers["chain-ingress"]["interfaces"]:
-            if interface["network"] == "external-ingress":
-                ingress_ip = interface["ip"]["address"]
+        # Get VXLAN processor IP
+        vxlan_ip = "N/A"
+        for interface in containers["vxlan-processor"]["interfaces"]:
+            if interface["network"] == "external-traffic":
+                vxlan_ip = interface["ip"]["address"]
                 break
         
         # Get NAT mapping from config
-        nat_config = containers["chain-nat"]["nat44"]["static_mapping"]
+        nat_config = containers["security-processor"]["nat44"]["static_mapping"]
         nat_local = nat_config["local_ip"]
         nat_external = nat_config["external_ip"]
         
         # Get VXLAN VNI and fragment MTU from config
         vxlan_vni = traffic_config["vxlan_vni"]
         
-        print("\nVPP Multi-Container Chain Topology:")
-        print("┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐")
-        print("│   INGRESS   │───▶│   VXLAN     │───▶│    NAT44    │───▶│   IPSEC     │───▶│ FRAGMENT    │───▶ [GCP]")
-        print(f"│ {ingress_ip:>11}│    │ Decap VNI   │    │ {nat_local:>11} │    │ AES-GCM-128 │    │  MTU 1400   │")
-        print(f"│             │    │    {vxlan_vni:<8}│    │ → {nat_external:<9} │    │ Encryption  │    │ IP Fragments│")
-        print("└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘")
-        print("        ▲                    │                    │                    │                    │")
-        print("        │              VXLAN Decap         NAT Translation      IPsec ESP           IP Fragmentation")
+        print("\nVPP 3-Container Chain Topology (50% Resource Reduction):")
+        print("┌─────────────┐    ┌─────────────────────────────────────┐    ┌─────────────┐")
+        print("│VXLAN-PROC   │───▶│        SECURITY-PROCESSOR           │───▶│DESTINATION  │")
+        print(f"│ {vxlan_ip:>11}│    │┌─────────┬─────────┬─────────────┐   │    │172.20.2.20  │")
+        print(f"│ Receives    │    ││  NAT44  │ IPsec   │Fragmentation│   │    │ TAP Bridge  │")
+        print(f"│VXLAN VNI {vxlan_vni:<3}│    ││{nat_local:<9}│AES-GCM  │  MTU 1400   │   │    │  10.0.3.1   │")
+        print(f"│ Decap L2    │    ││→{nat_external:<8}││ -128    │ IP Fragments│   │    │  Captures   │")
+        print("│             │    │└─────────┴─────────┴─────────────┘   │    │Final Packets│")
+        print("└─────────────┘    └─────────────────────────────────────┘    └─────────────┘")
+        print("        ▲                              │                                │")
+        print("        │                       Consolidated                      TAP Interface")
+        print("        │                      Security Functions                 Packet Capture")
         print("        │")
         print("┌─────────────┐")
         print("│   Traffic   │")
@@ -193,7 +197,7 @@ Examples:
   python3 main.py setup --force            # Force rebuild and setup
   python3 main.py test                     # Run full test suite
   python3 main.py test --type connectivity # Test only connectivity
-  python3 main.py debug chain-nat "show nat44 sessions"
+  python3 main.py debug security-processor "show nat44 sessions"
   python3 main.py status                   # Show chain status
   python3 main.py monitor --duration 120   # Monitor for 2 minutes
   python3 main.py cleanup                  # Cleanup environment

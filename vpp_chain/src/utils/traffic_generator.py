@@ -27,21 +27,21 @@ class TrafficGenerator:
         # Traffic configuration
         self.CONFIG = self.config_manager.get_traffic_config()
         
-        # Dynamically set ingress_ip and gcp_ip based on current mode's container config
+        # Dynamically set container IPs based on current mode's container config
         containers = self.config_manager.get_containers()
         
-        # Get ingress container IP from external-ingress network
-        ingress_container = containers["chain-ingress"]
-        for interface in ingress_container["interfaces"]:
-            if interface["network"] == "external-ingress":
-                self.CONFIG["ingress_ip"] = interface["ip"]["address"]
+        # Get VXLAN processor container IP from external-traffic network
+        vxlan_container = containers["vxlan-processor"]
+        for interface in vxlan_container["interfaces"]:
+            if interface["network"] == "external-traffic":
+                self.CONFIG["vxlan_ip"] = interface["ip"]["address"]
                 break
         
-        # Get GCP container IP from fragment-gcp network
-        gcp_container = containers["chain-gcp"]
-        for interface in gcp_container["interfaces"]:
-            if interface["network"] == "fragment-gcp":
-                self.CONFIG["gcp_ip"] = interface["ip"]["address"]
+        # Get destination container IP from processing-destination network
+        destination_container = containers["destination"]
+        for interface in destination_container["interfaces"]:
+            if interface["network"] == "processing-destination":
+                self.CONFIG["destination_ip"] = interface["ip"]["address"]
                 break
         
     def check_environment(self):
@@ -263,8 +263,8 @@ class TrafficGenerator:
                         status = "✅" if rx_packets > 0 or tx_packets > 0 else "❌"
                         print(f"{status} {container_name:15} ({description:20}): RX={rx_packets:3}, TX={tx_packets:3}, Drops={drops:3}")
                         
-                        # For GCP, we only expect RX packets
-                        if container_name == "chain-gcp":
+                        # For destination, we only expect RX packets
+                        if container_name == "destination":
                             if rx_packets == 0:
                                 chain_success = False
                         elif rx_packets == 0 and tx_packets == 0:

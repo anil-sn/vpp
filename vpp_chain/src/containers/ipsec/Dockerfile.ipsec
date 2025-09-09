@@ -1,9 +1,0 @@
-# IPsec-specific container build
-FROM vpp-chain-base:latest
-
-
-# IPsec monitoring script
-COPY src/containers/ipsec/ipsec-config.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/ipsec-config.sh
-
-LABEL purpose="IPsec encryption container"

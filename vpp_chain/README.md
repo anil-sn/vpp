@@ -1,45 +1,42 @@
-# VPP Multi-Container Chain: VXLAN → NAT → IPsec → Fragmentation
+# VPP Multi-Container Chain: Consolidated Network Processing Pipeline
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![Docker](https://img.shields.io/badge/Docker-20.10+-blue.svg)](https://docker.com)
-[![VPP](https://img.shields.io/badge/VPP-22.02+-green.svg)](https://fd.io)
+[![VPP](https://img.shields.io/badge/VPP-24.10+-green.svg)](https://fd.io)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Overview
 
-This project showcases a high-performance, modular network processing pipeline using Vector Packet Processing (VPP) distributed across multiple Docker containers. It demonstrates a sequence of advanced networking functions: VXLAN decapsulation, Network Address Translation (NAT), IPsec encryption, and packet fragmentation, simulating a real-world cloud networking scenario.
+This project showcases a high-performance, consolidated network processing pipeline using Vector Packet Processing (VPP) v24.10-release distributed across three specialized Docker containers. The optimized architecture implements VXLAN decapsulation, Network Address Translation (NAT44), IPsec encryption, and packet fragmentation with 50% reduced resource footprint while maintaining full functionality.
 
 ### Architecture and Processing Flow
 
-The architecture consists of a chain of Docker containers, each responsible for a specific network function. Data flows through this chain in the following sequence:
+The optimized architecture consists of three specialized Docker containers that provide comprehensive network processing. Data flows through this efficient chain in the following sequence:
 
-1.  **INGRESS (chain-ingress):** Receives incoming VXLAN-encapsulated UDP traffic on 172.20.0.10:4789
-2.  **VXLAN (chain-vxlan):** Decapsulates VXLAN packets targeting VNI 100 to extract inner IP packets
-3.  **NAT44 (chain-nat):** Performs network address translation mapping inner packet addresses (10.10.10.10:2055 → 172.20.3.10:2055)
-4.  **IPSEC (chain-ipsec):** Encrypts translated packets using ESP with AES-GCM-128 in an IPIP tunnel
-5.  **FRAGMENT (chain-fragment):** Fragments packets exceeding MTU of 1400 bytes before final delivery
-6.  **GCP (chain-gcp):** Final destination endpoint that receives processed and reassembled packets via TAP interface
+1.  **VXLAN-PROCESSOR (vxlan-processor):** Receives incoming VXLAN-encapsulated UDP traffic on 172.20.0.10:4789 and decapsulates VXLAN packets targeting VNI 100 to extract inner IP packets
+2.  **SECURITY-PROCESSOR (security-processor):** Consolidated processing container that performs:
+    - NAT44 translation mapping inner packet addresses (10.10.10.10:2055 → 172.20.2.10:2055)
+    - IPsec ESP encryption with AES-GCM-128 in an IPIP tunnel
+    - IP fragmentation for packets exceeding MTU of 1400 bytes
+3.  **DESTINATION (destination):** Final destination endpoint that receives processed and reassembled packets via TAP interface with packet capture capabilities
 
 ### Container and Network Setup
 
-The project uses Python-based container management to orchestrate the containers. Each container is connected to its neighbors in the chain via dedicated Docker networks. The current network topology is as follows:
+The project uses Python-based container management to orchestrate the three containers. Each container is connected via dedicated Docker networks in a streamlined topology:
 
-*   **external-ingress (172.20.0.0/24):** Main network for ingress traffic reception
-*   **ingress-vxlan (172.20.1.0/24):** Connects the INGRESS and VXLAN containers
-*   **vxlan-nat (172.20.2.0/24):** Connects the VXLAN and NAT containers  
-*   **nat-ipsec (172.20.3.0/24):** Connects the NAT and IPsec containers
-*   **ipsec-fragment (172.20.4.0/24):** Connects the IPsec and FRAGMENT containers
-*   **fragment-gcp (172.20.5.0/24):** Connects the FRAGMENT and GCP containers
+*   **external-traffic (172.20.0.0/24):** Main network for VXLAN traffic ingress
+*   **vxlan-processing (172.20.1.0/24):** Connects VXLAN-PROCESSOR to SECURITY-PROCESSOR
+*   **processing-destination (172.20.2.0/24):** Connects SECURITY-PROCESSOR to DESTINATION
 
 ### Project Structure
 
 The project is organized with the following key components:
 
 *   `README.md`: Provides a comprehensive overview of the project.
-*   `docker-compose.yml`: Defines and configures the multi-container setup.
+*   `config.json`: Centralized configuration for the 3-container architecture.
 *   `src/main.py`: The main command-line interface for managing the setup, running tests, and debugging.
 *   `src/utils/`: Contains Python modules for container management, network setup, and traffic generation.
-*   `src/configs/`: Includes shell scripts for configuring VPP within each container.
+*   `src/containers/`: Contains VPP configuration scripts and Dockerfiles for each container type.
 
 ### Use Cases
 
@@ -56,18 +53,20 @@ It is a valuable resource for anyone interested in advanced cloud networking, NF
 ### Architecture
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│   INGRESS   │───▶│   VXLAN     │───▶│    NAT44    │───▶│   IPSEC     │───▶│ FRAGMENT    │───▶│     GCP     │
-│ 172.20.0.10 │    │ 172.20.1.20 │    │ 172.20.2.20 │    │ 172.20.3.20 │    │ 172.20.4.20 │    │ 172.20.5.20 │
-│   Receives  │    │ Decap VNI   │    │ 10.10.10.10 │    │ AES-GCM-128 │    │  MTU 1400   │    │ TAP Bridge  │
-│VXLAN Traffic│    │    100      │    │→172.20.3.10 │    │ Encryption  │    │ IP Fragments│    │  10.0.3.1   │
-│ UDP:4789    │    │ UDP:4789    │    │  Port:2055  │    │ ESP Tunnel  │    │ Large Pkts  │    │  Receives   │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-        ▲                    │                    │                    │                    │                    │
-        │              VXLAN Decap         NAT Translation      IPsec ESP           IP Fragmentation    TAP Interface
-        │              Strips outer        Translates src       Encrypts payload    Splits >MTU packets  Bridge to Linux
-        │              headers             IP:PORT mapping      with AES-GCM-128    into fragments       for capture
-        │
+┌─────────────┐    ┌─────────────────────────────────────┐    ┌─────────────┐
+│VXLAN-PROC   │───▶│        SECURITY-PROCESSOR           │───▶│DESTINATION  │
+│172.20.0.10  │    │         172.20.1.20                 │    │172.20.2.20  │
+│   Receives  │    │┌─────────┬─────────┬─────────────┐   │    │ TAP Bridge  │
+│VXLAN Traffic│    ││  NAT44  │ IPsec   │Fragmentation│   │    │  10.0.3.1   │
+│ UDP:4789    │    ││10.10.10.│AES-GCM  │  MTU 1400   │   │    │  Receives   │
+│             │    ││10→172.20││ -128    │ IP Fragments│   │    │& Captures   │
+│ Decap VNI   │    ││ .2.10   │ESP Tunn.│Large Packets│   │    │Final Packets│
+│    100      │    │└─────────┴─────────┴─────────────┘   │    │             │
+└─────────────┘    └─────────────────────────────────────┘    └─────────────┘
+        ▲                              │                                │
+        │                       Consolidated                      TAP Interface
+        │                      Security Functions                 Packet Capture
+        │                                                        & Linux Bridge
 ┌─────────────┐
 │   Traffic   │
 │ Generator   │  
@@ -79,12 +78,12 @@ It is a valuable resource for anyone interested in advanced cloud networking, NF
 
 ### Processing Flow
 
-1. **INGRESS (172.20.0.10)**: Receives VXLAN-encapsulated UDP traffic and forwards to VXLAN container
-2. **VXLAN (172.20.1.20)**: Decapsulates VXLAN packets (VNI 100) to extract inner IP packets  
-3. **NAT44 (172.20.2.20)**: Translates inner packet addresses (10.10.10.10:2055 → 172.20.3.10:2055)
-4. **IPSEC (172.20.3.20)**: Encrypts packets using ESP with AES-GCM-128 in an IPIP tunnel
-5. **FRAGMENT (172.20.4.20)**: Fragments large packets (>1400 MTU) before final delivery
-6. **GCP (172.20.5.20)**: Final destination with TAP interface bridge (10.0.3.1) for packet capture
+1. **VXLAN-PROCESSOR (172.20.0.10)**: Receives VXLAN-encapsulated UDP traffic on port 4789 and decapsulates VXLAN packets (VNI 100) to extract inner IP packets
+2. **SECURITY-PROCESSOR (172.20.1.20)**: Consolidated processing that performs:
+   - NAT44 translation of inner packet addresses (10.10.10.10:2055 → 172.20.2.10:2055)
+   - IPsec ESP encryption with AES-GCM-128 in an IPIP tunnel (172.20.1.20 → 172.20.2.20)
+   - IP fragmentation for large packets exceeding 1400 byte MTU
+3. **DESTINATION (172.20.2.20)**: Final destination with TAP interface bridge (10.0.3.1/24) for packet capture and Linux integration
 
 ## Quick Start
 
@@ -94,7 +93,7 @@ It is a valuable resource for anyone interested in advanced cloud networking, NF
 - **Docker 20.10+** with docker-compose
 - **Python 3.8+** with pip
 - **Root access** (required for network configuration)
-- **8GB+ RAM** recommended for VPP containers
+- **4GB+ RAM** required for optimized 3-container VPP setup
 
 ### Installation
 
@@ -163,19 +162,19 @@ sudo python3 src/main.py test --type traffic
 
 ```bash
 # Debug VXLAN decapsulation
-sudo python3 src/main.py debug chain-vxlan "show vxlan tunnel"
+sudo python3 src/main.py debug vxlan-processor "show vxlan tunnel"
 
-# Check NAT sessions
-sudo python3 src/main.py debug chain-nat "show nat44 sessions"
+# Check consolidated security processing
+sudo python3 src/main.py debug security-processor "show nat44 sessions"
+sudo python3 src/main.py debug security-processor "show ipsec sa"
+sudo python3 src/main.py debug security-processor "show ipip tunnel"
 
-# Verify IPsec SAs
-sudo python3 src/main.py debug chain-ipsec "show ipsec sa"
-
-# Check interface statistics
-sudo python3 src/main.py debug chain-fragment "show interface"
+# Check destination and packet capture
+sudo python3 src/main.py debug destination "show interface"
+sudo python3 src/main.py debug destination "show trace"
 
 # View packet traces
-sudo python3 src/main.py debug chain-vxlan "show trace"
+sudo python3 src/main.py debug vxlan-processor "show trace"
 ```
 
 ## Container Architecture
@@ -184,31 +183,36 @@ sudo python3 src/main.py debug chain-vxlan "show trace"
 
 | Container | Role | Networks | Key Configuration |
 |-----------|------|----------|-------------------|
-| **chain-ingress** | VXLAN Reception | external-ingress, ingress-vxlan | Receives VXLAN on 172.20.0.10:4789 |
-| **chain-vxlan** | VXLAN Decapsulation | ingress-vxlan, vxlan-nat | Decaps VNI 100, forwards inner IP |
-| **chain-nat** | NAT Translation | vxlan-nat, nat-ipsec | Maps 10.10.10.10:2055 → 172.20.3.10:2055 |
-| **chain-ipsec** | IPsec Encryption | nat-ipsec, ipsec-fragment | ESP AES-GCM-128 encryption |
-| **chain-fragment** | IP Fragmentation | ipsec-fragment, fragment-gcp | MTU 1400, fragments large packets |
-| **chain-gcp** | Final Destination | fragment-gcp | TAP interface bridge to 10.0.3.1/24 |
+| **vxlan-processor** | VXLAN Decapsulation | external-traffic, vxlan-processing | Receives VXLAN on 172.20.0.10:4789, decaps VNI 100 |
+| **security-processor** | Security Functions | vxlan-processing, processing-destination | NAT44 + IPsec ESP + Fragmentation (172.20.1.20) |
+| **destination** | Packet Capture | processing-destination | TAP interface bridge to 10.0.3.1/24, packet capture |
 
 ### Network Topology
 
 ```
 Networks:
-├── external-ingress (172.20.0.0/24)    # Main network for ingress traffic
-├── ingress-vxlan (172.20.1.0/24)       # Ingress → VXLAN
-├── vxlan-nat (172.20.2.0/24)           # VXLAN → NAT
-├── nat-ipsec (172.20.3.0/24)           # NAT → IPsec
-├── ipsec-fragment (172.20.4.0/24)      # IPsec → Fragment
-└── fragment-gcp (172.20.5.0/24)        # Fragment → GCP
+├── external-traffic (172.20.0.0/24)        # VXLAN traffic ingress
+├── vxlan-processing (172.20.1.0/24)        # VXLAN → Security Processing
+└── processing-destination (172.20.2.0/24)  # Security → Destination
 ```
+
+### Architecture Benefits
+
+**Consolidated 3-Container Design:**
+- 50% reduction in resource usage (from 6 to 3 containers)
+- Simplified network topology and debugging  
+- Logical separation: Network Processing | Security Processing | Destination
+- Maintained functionality with improved efficiency
+- Reduced inter-container communication overhead
 
 ## Project Structure
 
 ```
 vpp_chain/
 ├── README.md                       # This comprehensive guide
-├── config.json                    # Network and container configuration
+├── config.json                    # Centralized network and container configuration
+├── CLAUDE.md                      # Claude Code guidance documentation
+├── quick-start.sh                 # Quick setup and test script
 ├── src/
 │   ├── main.py                    # Main CLI entry point
 │   ├── utils/                     # Python utility modules
@@ -216,32 +220,32 @@ vpp_chain/
 │   │   ├── logger.py             # Logging and output formatting
 │   │   ├── container_manager.py  # Docker container management
 │   │   ├── network_manager.py    # Network setup and testing
+│   │   ├── config_manager.py     # Configuration management
 │   │   └── traffic_generator.py  # Traffic generation and testing
-│   └── containers/               # Container-specific configurations
-│       ├── ingress/              # VXLAN reception container
-│       ├── vxlan/               # VXLAN decapsulation container
-│       ├── nat/                 # NAT44 translation container
-│       ├── ipsec/               # IPsec encryption container
-│       ├── fragment/            # IP fragmentation container
-│       ├── gcp/                 # Final destination container
-│       └── Dockerfile.base      # Base container image
-├── docs/                        # Additional documentation
-└── VPP_CHAIN_MANUAL_TEST_GUIDE.md # Detailed testing procedures
+│   └── containers/               # Container configurations
+│       ├── vxlan-config.sh       # VXLAN processor configuration
+│       ├── security-config.sh    # Security processor configuration  
+│       ├── destination-config.sh # Destination configuration
+│       ├── Dockerfile.vxlan      # VXLAN processor container
+│       ├── Dockerfile.security   # Security processor container
+│       └── Dockerfile.destination # Destination container
+└── docs/                         # Additional documentation
+    └── manual_test_guide.md      # Detailed testing procedures
 ```
 
 ## Troubleshooting
 
 ### Common Issues and Solutions
 
-#### High CPU Usage on TAP Interface (chain-gcp)
-The TAP interface in the chain-gcp container may consume high CPU due to polling mode:
+#### High CPU Usage on TAP Interface (destination)
+The TAP interface in the destination container may consume high CPU due to polling mode:
 
 ```bash
 # Check TAP interface CPU usage
-docker exec chain-gcp top -p $(pgrep vpp)
+docker exec destination top -p $(pgrep vpp)
 
 # Solution: Optimize TAP interface settings
-docker exec chain-gcp vppctl set interface rx-mode tap0 interrupt
+docker exec destination vppctl set interface rx-mode tap0 interrupt
 ```
 
 #### VPP Packet Drops and Test Failures
@@ -255,16 +259,16 @@ VPP's high-performance architecture can cause "Low success rate" errors:
 **Diagnostic commands:**
 ```bash
 # Check detailed drop reasons
-docker exec chain-vxlan vppctl show errors
+docker exec vxlan-processor vppctl show errors
 
 # Check interface statistics
-for container in chain-ingress chain-vxlan chain-nat chain-ipsec chain-fragment chain-gcp; do
+for container in vxlan-processor security-processor destination; do
   echo "=== $container Interface Stats ==="
   docker exec $container vppctl show interface | grep -E "(rx packets|tx packets|drops)"
 done
 
 # Check VPP traces
-docker exec chain-vxlan vppctl show trace
+docker exec vxlan-processor vppctl show trace
 ```
 
 **Solutions:**
@@ -275,27 +279,27 @@ docker exec chain-vxlan vppctl show trace
 #### Container Health Issues
 ```bash
 # Verify all containers are running and VPP is responsive
-for container in chain-ingress chain-vxlan chain-nat chain-ipsec chain-fragment chain-gcp; do
+for container in vxlan-processor security-processor destination; do
   echo "Checking $container..."
-  docker exec $container vppctl show version >/dev/null 2>&1 && echo "✅ OK" || echo "❌ FAILED"
+  docker exec $container vppctl show version >/dev/null 2>&1 && echo "OK" || echo "FAILED"
 done
 ```
 
 #### Network Connectivity Problems
 ```bash
 # Test UDP connectivity between container pairs (recommended over ping)
-echo "test" | docker exec -i chain-ingress nc -u -w 1 172.20.1.20 2000
+echo "test" | docker exec -i vxlan-processor nc -u -w 1 172.20.1.20 2000
 
 # Check VPP routing tables
-docker exec chain-vxlan vppctl show ip fib | grep -E "172.20"
+docker exec vxlan-processor vppctl show ip fib | grep -E "172.20"
 
 # Verify ARP resolution
-docker exec chain-vxlan vppctl show ip neighbors
+docker exec vxlan-processor vppctl show ip neighbors
 ```
 
 ### Advanced Testing Procedures
 
-For comprehensive testing, refer to the `/home/asrirang/code/vpp/vpp_chain/VPP_CHAIN_MANUAL_TEST_GUIDE.md` which includes:
+For comprehensive testing, refer to the `docs/manual_test_guide.md` which includes:
 
 - Infrastructure validation (container status, VPP health, interface status)
 - Layer 3 connectivity testing with expected results
@@ -318,11 +322,11 @@ sudo python3 src/main.py test --type connectivity
 sudo python3 src/main.py test --type traffic
 
 # 4. Debug specific container
-sudo python3 src/main.py debug chain-vxlan "show vxlan tunnel"
+sudo python3 src/main.py debug vxlan-processor "show vxlan tunnel"
 
 # 5. Manual UDP connectivity test (most reliable for VPP)
-timeout 2 docker exec chain-vxlan nc -l -u -p 2000 &
-echo "test" | timeout 2 docker exec -i chain-ingress nc -u -w 1 172.20.1.20 2000
+timeout 2 docker exec vxlan-processor nc -l -u -p 2000 &
+echo "test" | timeout 2 docker exec -i vxlan-processor nc -u -w 1 172.20.1.20 2000
 ```
 
 ### Performance Optimization
@@ -340,13 +344,13 @@ sysctl -p
 #### VPP Configuration Optimizations
 ```bash
 # Enable promiscuous mode for better packet reception
-docker exec chain-ingress vppctl set interface promiscuous on host-eth0
+docker exec vxlan-processor vppctl set interface promiscuous on host-eth0
 
 # Optimize buffer allocation
-docker exec chain-ingress vppctl set interface rx-mode host-eth0 polling
+docker exec vxlan-processor vppctl set interface rx-mode host-eth0 polling
 
 # Set larger MTU for jumbo frame support
-docker exec chain-ingress vppctl set interface mtu packet 9000 host-eth0
+docker exec vxlan-processor vppctl set interface mtu packet 9000 host-eth0
 ```
 
 ## Detailed Network Architecture
@@ -360,24 +364,20 @@ Container Network Architecture:
 ┌─────────────────────────────────────────────────────────────┐
 │                    HOST LINUX SYSTEM                        │
 │  Docker Bridge Networks:                                    │
-│  ├── external-ingress    (172.20.0.0/24, GW: 172.20.0.1)  │
-│  ├── ingress-vxlan       (172.20.1.0/24, GW: 172.20.1.1)  │
-│  ├── vxlan-nat           (172.20.2.0/24, GW: 172.20.2.1)  │
-│  ├── nat-ipsec           (172.20.3.0/24, GW: 172.20.3.1)  │
-│  ├── ipsec-fragment      (172.20.4.0/24, GW: 172.20.4.1)  │
-│  └── fragment-gcp        (172.20.5.0/24, GW: 172.20.5.1)  │
+│  ├── external-traffic      (172.20.0.0/24, GW: 172.20.0.1) │
+│  ├── vxlan-processing      (172.20.1.0/24, GW: 172.20.1.1) │
+│  └── processing-destination (172.20.2.0/24, GW: 172.20.2.1) │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### Complete Packet Transformation Flow
 
-1. **Traffic Generation → INGRESS**: VXLAN(VNI=100)/IP(10.10.10.5→10.10.10.10)/UDP(2055)
-2. **INGRESS → VXLAN**: Forwards VXLAN packet unchanged
-3. **VXLAN → NAT**: Decapsulated inner packet IP(10.10.10.5→10.10.10.10)/UDP(2055)
-4. **NAT → IPSEC**: NAT-translated IP(10.10.10.5→172.20.3.10)/UDP(2055)
-5. **IPSEC → FRAGMENT**: Encrypted IP(172.20.3.20→172.20.4.20)/ESP(encrypted_payload)
-6. **FRAGMENT → GCP**: Fragmented encrypted packets (≤1400 bytes each)
-7. **GCP TAP Interface**: Reassembled packets via 10.0.3.1/24 bridge to Linux stack
+1. **Traffic Generation → VXLAN-PROCESSOR**: VXLAN(VNI=100)/IP(10.10.10.5→10.10.10.10)/UDP(2055)
+2. **VXLAN-PROCESSOR → SECURITY-PROCESSOR**: Decapsulated inner packet IP(10.10.10.5→10.10.10.10)/UDP(2055)
+3. **SECURITY-PROCESSOR (NAT44)**: NAT-translated IP(10.10.10.5→172.20.2.10)/UDP(2055)
+4. **SECURITY-PROCESSOR (IPsec)**: Encrypted IP(172.20.1.20→172.20.2.20)/ESP(encrypted_payload)
+5. **SECURITY-PROCESSOR (Fragmentation)**: Fragmented encrypted packets (≤1400 bytes each)
+6. **DESTINATION**: Reassembled packets via 10.0.3.1/24 TAP bridge to Linux stack
 
 ## Use Cases
 

@@ -58,8 +58,8 @@ class ContainerManager:
                 networks_config[net_name] = {"ipv4_address": ip_address}
 
             depends_on = []
-            # Define dependency chain order manually since containers are now in a dict
-            chain_order = ["chain-ingress", "chain-vxlan", "chain-nat", "chain-ipsec", "chain-fragment", "chain-gcp"]
+            # Define dependency chain order for new 3-container architecture
+            chain_order = ["vxlan-processor", "security-processor", "destination"]
             if container_name in chain_order:
                 current_index = chain_order.index(container_name)
                 if current_index > 0:
@@ -74,10 +74,10 @@ class ContainerManager:
                 "hostname": service_name,
                 "privileged": True,
                 "volumes": [
-                    # Mount container-specific config directory. Assumes directory name matches container name after 'chain-'
-                    f"./src/containers/{service_name.replace('chain-', '')}:/vpp-config:ro",
-                    "./src/configs:/vpp-common:ro",
-                    "/tmp/vpp-logs:/var/log/vpp"
+                    # Mount container-specific config directory for new architecture
+                    "./src/containers:/vpp-config:ro",
+                    "/tmp/vpp-logs:/var/log/vpp",
+                    "/tmp/packet-captures:/tmp"
                 ],
                 "networks": networks_config,
                 "cap_add": [
@@ -90,9 +90,6 @@ class ContainerManager:
                 },
                 "depends_on": depends_on
             }
-            # Add packet-captures volume for chain-gcp
-            if service_name == "chain-gcp":
-                compose_data["services"][service_name]["volumes"].append("/tmp/packet-captures:/tmp")
 
         compose_file_path = self.project_root / "docker-compose.yml"
         temp_compose_file_path = Path("/tmp") / "docker-compose.yml"
@@ -126,37 +123,24 @@ class ContainerManager:
     def build_images(self):
         """Build container images"""
         try:
-            log_info("Building VPP chain base image...")
-            
-            base_dockerfile_path = self.project_root / "src" / "containers" / "Dockerfile.base"
-            
-            # Build base image
-            result = subprocess.run([
-                "docker", "build", 
-                "-t", "vpp-chain-base:latest",
-                "-f", str(base_dockerfile_path),
-                str(self.project_root)
-            ], capture_output=True, text=True, check=True)
-            
-            log_success("VPP chain base image built successfully")
+            log_info("Building VPP 3-container chain images...")
 
-            # Build specialized container images
-            # Assumes specialized Dockerfiles are named Dockerfile.<container_type> (e.g., Dockerfile.vxlan)
-            # and located in src/containers/<container_type>/
+            # Build specialized container images for new 3-container architecture
             for container_name, container in self.CONTAINERS.items():
-                container_dockerfile_path = self.project_root / "src" / "containers" / container_name.replace("chain-", "") / f"Dockerfile.{container_name.replace('chain-', '')}"
+                dockerfile_path = self.project_root / container["dockerfile"]
                 
-                if container_dockerfile_path.exists():
-                    log_info(f"Building specialized image for {container_name}...")
+                if dockerfile_path.exists():
+                    log_info(f"Building image for {container_name}...")
                     result = subprocess.run([
                         "docker", "build", 
                         "-t", f"{container_name}:latest",
-                        "-f", str(container_dockerfile_path),
+                        "-f", str(dockerfile_path),
                         str(self.project_root)
                     ], capture_output=True, text=True, check=True)
-                    log_success(f"Specialized image for {container_name} built successfully")
+                    log_success(f"Image for {container_name} built successfully")
                 else:
-                    log_info(f"No specialized Dockerfile found for {container_name}, using base image.")
+                    log_error(f"Dockerfile not found: {dockerfile_path}")
+                    return False
             
             log_success("All container images built successfully")
             return True
@@ -192,13 +176,11 @@ class ContainerManager:
         run_command.extend(["--ulimit", "memlock=-1:-1"])
 
         # Add volumes
-        container_type = container_name.replace("chain-", "")
         run_command.extend([
-            "-v", f"{self.project_root}/src/containers/{container_type}:/vpp-config:ro",
-            "-v", f"{self.project_root}/src/configs:/vpp-common:ro",
+            "-v", f"{self.project_root}/src/containers:/vpp-config:ro",
             "-v", "/tmp/vpp-logs:/var/log/vpp"
         ])
-        if container_name == "chain-gcp":
+        if container_name == "destination":
             run_command.extend(["-v", "/tmp/packet-captures:/tmp"])
 
         # Add primary network and IP
@@ -236,7 +218,7 @@ class ContainerManager:
         time.sleep(10) # Give VPP some time to start
         subprocess.run([
             "docker", "exec", container_name, "bash", "-c",
-            f"cd /vpp-config && ./{container_info['config_script']}"
+            f"cd /vpp-config && ./{Path(container_info['config_script']).name}"
         ], capture_output=True, text=True, check=True)
         log_success(f"VPP configured for {container_name}.")
 
@@ -289,7 +271,7 @@ class ContainerManager:
                 # Execute configuration script in container
                 result = subprocess.run([
                     "docker", "exec", container_name,
-                    "bash", "-c", f"cd /vpp-config && ./{container['config_script']}"
+                    "bash", "-c", f"cd /vpp-config && ./{Path(container['config_script']).name}"
                 ], capture_output=True, text=True)
                 
                 if result.returncode != 0:

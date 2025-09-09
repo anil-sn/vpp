@@ -99,29 +99,29 @@ class NetworkManager:
             # Test bridge connectivity from host
             log_info("Testing host → container connectivity...")
             
-            # Get IP of chain-ingress from config_manager
+            # Get IP of vxlan-processor from config_manager
             containers = self.config_manager.get_containers()
             
-            # Get ingress container IP from external-ingress network
-            ingress_container = containers["chain-ingress"]
-            ingress_ip = None
-            for interface in ingress_container["interfaces"]:
-                if interface["network"] == "external-ingress":
-                    ingress_ip = interface["ip"]["address"]
+            # Get vxlan processor IP from external-traffic network
+            vxlan_container = containers["vxlan-processor"]
+            vxlan_ip = None
+            for interface in vxlan_container["interfaces"]:
+                if interface["network"] == "external-traffic":
+                    vxlan_ip = interface["ip"]["address"]
                     break
 
-            if not ingress_ip:
-                log_error("Could not determine IP for chain-ingress")
+            if not vxlan_ip:
+                log_error("Could not determine IP for vxlan-processor")
                 return False
 
             result = subprocess.run([
-                "ping", "-c", "1", "-W", "2", ingress_ip
+                "ping", "-c", "1", "-W", "2", vxlan_ip
             ], capture_output=True, text=True)
             
             if result.returncode == 0:
-                log_success(f"Host can reach ingress container ({ingress_ip})")
+                log_success(f"Host can reach vxlan-processor container ({vxlan_ip})")
             else:
-                log_error("Host cannot reach ingress container")
+                log_error("Host cannot reach vxlan-processor container")
                 return False
             
             log_success("Basic connectivity verified")

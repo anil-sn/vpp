@@ -29,7 +29,7 @@ class TrafficGenerator:
         
         # Dynamically set ingress_ip and gcp_ip based on current mode's container config
         containers = self.config_manager.get_containers()
-        self.CONFIG["ingress_ip"] = containers[1]["networks"]["ingress-vxlan"]  # Send directly to VXLAN container
+        self.CONFIG["ingress_ip"] = containers[0]["networks"]["external-ingress"]  # Send to INGRESS container on external network
         self.CONFIG["gcp_ip"] = containers[-1]["networks"]["fragment-gcp"]
         
     def check_environment(self):

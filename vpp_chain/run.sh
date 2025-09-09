@@ -5,3 +5,5 @@
 set -e
 sudo python3 src/main.py setup
 sudo python3 src/main.py test
+echo ""
+

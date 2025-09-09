@@ -12,9 +12,13 @@ vppctl create host-interface name eth1
 vppctl set interface ip address host-eth1 172.20.1.10/24
 vppctl set interface state host-eth1 up
 
-# Enable IP forwarding
+# Enable IP forwarding and VXLAN handling
 vppctl set interface unnumbered host-eth0 use host-eth1
 vppctl set interface unnumbered host-eth1 use host-eth0
+
+# Configure interface to accept VXLAN traffic
+vppctl set interface l2 bridge host-eth0 1 
+vppctl set interface l2 bridge host-eth1 1
 
 # Set up routing to forward VXLAN traffic to next container
 vppctl ip route add 172.20.1.20/32 via 172.20.1.20 host-eth1

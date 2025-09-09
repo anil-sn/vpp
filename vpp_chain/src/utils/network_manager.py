@@ -19,19 +19,54 @@ class NetworkManager:
         self.NETWORKS = self.config_manager.get_networks()
         self.CONNECTIVITY_TESTS = self.config_manager.get_connectivity_tests()
     
+    def _check_host_network_conflicts(self):
+        """Check for potential conflicts with host networking"""
+        try:
+            # Get host routing table and interfaces
+            result = subprocess.run(["ip", "route", "show"], capture_output=True, text=True)
+            host_routes = result.stdout
+            
+            for network in self.NETWORKS:
+                subnet = network["subnet"]
+                # Extract network portion for conflict check
+                import ipaddress
+                net = ipaddress.IPv4Network(subnet)
+                
+                # Check if subnet overlaps with host routes
+                if str(net.network_address) in host_routes:
+                    log_warning(f"Potential conflict: {subnet} may overlap with host routing")
+                    
+            return True
+        except Exception as e:
+            log_warning(f"Host network conflict check failed: {e}")
+            return True
+
     def setup_networks(self):
         """Create Docker networks for the chain"""
         try:
             log_info("Setting up Docker networks...")
             
+            # Check for host network conflicts first
+            self._check_host_network_conflicts()
+            
             for network in self.NETWORKS:
                 description = network.get('description', network['subnet'])
                 log_info(f"Creating network {network['name']} ({description})")
                 
-                # Remove existing network if it exists
-                subprocess.run([
-                    "docker", "network", "rm", network["name"]
-                ], capture_output=True, text=True)
+                # Remove existing network if it exists (safely)
+                try:
+                    result = subprocess.run([
+                        "docker", "network", "inspect", network["name"]
+                    ], capture_output=True, text=True)
+                    
+                    if result.returncode == 0:
+                        # Network exists, check if safe to remove
+                        log_info(f"Removing existing network {network['name']}")
+                        subprocess.run([
+                            "docker", "network", "rm", network["name"]
+                        ], capture_output=True, text=True)
+                except Exception as e:
+                    log_warning(f"Network {network['name']} removal check failed: {e}")
                 
                 # Create new network
                 result = subprocess.run([
@@ -81,8 +116,9 @@ class NetworkManager:
                     except Exception:
                         log_warning(f"Failed to remove orphaned network {net_name} (may be in use).")
 
-            # Clean up orphaned networks (general Docker prune)
-            subprocess.run(["docker", "network", "prune", "-f"], capture_output=True, text=True)
+            # Clean up orphaned networks (general Docker prune) - DISABLED FOR HOST SAFETY
+            # subprocess.run(["docker", "network", "prune", "-f"], capture_output=True, text=True)
+            log_warning("Network prune disabled to protect host networks")
 
             log_success("Network cleanup completed.")
             return True

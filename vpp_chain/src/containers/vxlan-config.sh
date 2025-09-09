@@ -25,8 +25,8 @@ for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
   vppctl set interface ip address "host-$IF_NAME" "$IF_IP_ADDR/$IF_IP_MASK"
   vppctl set interface state "host-$IF_NAME" up
   
-  # Enable promiscuous mode for better packet reception
-  vppctl set interface promiscuous on "host-$IF_NAME"
+  # Enable promiscuous mode for better packet reception (VPP interfaces only)
+  # vppctl set interface promiscuous on "host-$IF_NAME" # DISABLED FOR HOST SAFETY
 done
 
 # Create VXLAN tunnel

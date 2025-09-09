@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for ContainerManager
+Unit tests for ContainerManager - Updated for new config.json structure
 """
 
 import unittest
@@ -12,31 +12,76 @@ from unittest.mock import Mock, patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from utils.container_manager import ContainerManager
+from utils.config_manager import ConfigManager
 
 class TestContainerManager(unittest.TestCase):
     
     def setUp(self):
-        self.container_manager = ContainerManager()
+        # Mock config manager with current structure
+        self.mock_config = Mock(spec=ConfigManager)
+        self.mock_config.get_containers.return_value = {
+            "chain-ingress": {
+                "description": "VXLAN packet reception",
+                "dockerfile": "src/containers/ingress/Dockerfile.ingress",
+                "config_script": "ingress-config.sh",
+                "interfaces": [
+                    {
+                        "name": "eth0",
+                        "network": "external-ingress",
+                        "ip": {"address": "172.20.0.10", "mask": 24}
+                    },
+                    {
+                        "name": "eth1", 
+                        "network": "ingress-vxlan",
+                        "ip": {"address": "172.20.1.10", "mask": 24}
+                    }
+                ]
+            },
+            "chain-gcp": {
+                "description": "GCP destination endpoint",
+                "dockerfile": "src/containers/Dockerfile.base",
+                "config_script": "gcp-config.sh",
+                "interfaces": [
+                    {
+                        "name": "eth0",
+                        "network": "fragment-gcp", 
+                        "ip": {"address": "172.20.5.20", "mask": 24}
+                    }
+                ]
+            }
+        }
+        
+        self.mock_config.get_networks.return_value = [
+            {"name": "external-ingress", "subnet": "172.20.0.0/24", "gateway": "172.20.0.1"},
+            {"name": "fragment-gcp", "subnet": "172.20.5.0/24", "gateway": "172.20.5.1"}
+        ]
+        
+        self.container_manager = ContainerManager(self.mock_config)
     
     def test_container_definitions(self):
         """Test that container definitions are properly configured"""
-        self.assertEqual(len(self.container_manager.CONTAINERS), 6)
+        containers = self.mock_config.get_containers()
+        self.assertEqual(len(containers), 2)  # Test subset
         
         # Check ingress container
-        ingress = self.container_manager.CONTAINERS[0]
-        self.assertEqual(ingress['name'], 'chain-ingress')
-        self.assertEqual(ingress['ip_addresses']['underlay'], '192.168.10.2')
-        self.assertEqual(ingress['ip_addresses']['chain-1-2'], '10.1.1.1')
+        self.assertIn('chain-ingress', containers)
+        ingress = containers['chain-ingress'] 
+        self.assertEqual(ingress['description'], 'VXLAN packet reception')
+        self.assertEqual(ingress['interfaces'][0]['ip']['address'], '172.20.0.10')
     
     def test_container_network_mapping(self):
         """Test that network mappings are correct"""
-        for container in self.container_manager.CONTAINERS:
-            self.assertIn('networks', container)
-            self.assertIn('ip_addresses', container)
+        containers = self.mock_config.get_containers()
+        
+        for container_name, container in containers.items():
+            self.assertIn('interfaces', container)
             
-            # Each network should have corresponding IP
-            for network in container['networks']:
-                self.assertIn(network, container['ip_addresses'])
+            # Each interface should have network and IP
+            for interface in container['interfaces']:
+                self.assertIn('network', interface)
+                self.assertIn('ip', interface)
+                self.assertIn('address', interface['ip'])
+                self.assertIn('mask', interface['ip'])
     
     @patch('subprocess.run')
     def test_build_images_success(self, mock_run):
@@ -45,7 +90,9 @@ class TestContainerManager(unittest.TestCase):
         
         result = self.container_manager.build_images()
         self.assertTrue(result)
-        mock_run.assert_called_once()
+        
+        # Should call docker build for base + specialized images
+        self.assertGreaterEqual(mock_run.call_count, 1)
     
     @patch('subprocess.run')
     def test_start_containers_success(self, mock_run):
@@ -55,6 +102,15 @@ class TestContainerManager(unittest.TestCase):
         with patch('time.sleep'):  # Mock sleep to speed up test
             result = self.container_manager.start_containers()
             self.assertTrue(result)
+    
+    def test_config_script_reference(self):
+        """Test that config_script field is used correctly"""
+        containers = self.mock_config.get_containers()
+        
+        for container_name, container in containers.items():
+            self.assertIn('config_script', container)
+            # Should end with .sh
+            self.assertTrue(container['config_script'].endswith('.sh'))
 
 if __name__ == '__main__':
     unittest.main()

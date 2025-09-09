@@ -6,101 +6,251 @@
         {
           "name": "external-ingress",
           "subnet": "172.20.0.0/24",
-          "gateway": "172.20.0.1",
-          "description": "External network for Ingress"
+          "gateway": "172.20.0.1"
         },
         {
           "name": "ingress-vxlan",
           "subnet": "172.20.1.0/24",
-          "gateway": "172.20.1.1",
-          "description": "Ingress → VXLAN"
+          "gateway": "172.20.1.1"
         },
         {
           "name": "vxlan-nat",
           "subnet": "172.20.2.0/24",
-          "gateway": "172.20.2.1",
-          "description": "VXLAN → NAT"
+          "gateway": "172.20.2.1"
         },
         {
           "name": "nat-ipsec",
           "subnet": "172.20.3.0/24",
-          "gateway": "172.20.3.1",
-          "description": "NAT → IPsec"
+          "gateway": "172.20.3.1"
         },
         {
           "name": "ipsec-fragment",
           "subnet": "172.20.4.0/24",
-          "gateway": "172.20.4.1",
-          "description": "IPsec → Fragment"
+          "gateway": "172.20.4.1"
         },
         {
           "name": "fragment-gcp",
           "subnet": "172.20.5.0/24",
-          "gateway": "172.20.5.1",
-          "description": "Fragment → GCP"
+          "gateway": "172.20.5.1"
         }
       ],
-      "containers": [
-        {
-          "name": "chain-ingress",
+      "containers": {
+        "chain-ingress": {
           "description": "VXLAN packet reception",
-          "config": "ingress-config.sh",
           "dockerfile": "src/containers/ingress/Dockerfile.ingress",
-          "networks": {
-            "external-ingress": "172.20.0.10",
-            "ingress-vxlan": "172.20.1.10"
-          }
+          "config_script": "ingress-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "external-ingress",
+              "ip": {
+                "address": "172.20.0.10",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1",
+              "network": "ingress-vxlan",
+              "ip": {
+                "address": "172.20.1.10",
+                "mask": 24
+              }
+            }
+          ],
+          "bridge_domain_id": 1,
+          "routes": [
+            {
+              "to": "172.20.1.20/32",
+              "via": "172.20.1.20",
+              "interface": "eth1"
+            },
+            {
+              "to": "172.20.2.0/24",
+              "via": "172.20.1.20",
+              "interface": "eth1"
+            }
+          ]
         },
-        {
-          "name": "chain-vxlan",
+        "chain-vxlan": {
           "description": "VXLAN decapsulation",
-          "config": "vxlan-config.sh",
           "dockerfile": "src/containers/vxlan/Dockerfile.vxlan",
-          "networks": {
-            "ingress-vxlan": "172.20.1.20",
-            "vxlan-nat": "172.20.2.10"
-          }
+          "config_script": "vxlan-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "ingress-vxlan",
+              "ip": {
+                "address": "172.20.1.20",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1",
+              "network": "vxlan-nat",
+              "ip": {
+                "address": "172.20.2.10",
+                "mask": 24
+              }
+            }
+          ],
+          "vxlan_tunnel": {
+            "src": "172.20.1.20",
+            "dst": "172.20.1.10",
+            "vni": 100
+          },
+          "routes": [
+            {
+              "to": "10.10.10.0/24",
+              "via": "172.20.2.20",
+              "interface": "eth1"
+            }
+          ]
         },
-        {
-          "name": "chain-nat",
+        "chain-nat": {
           "description": "NAT44 translation",
-          "config": "nat-config.sh",
           "dockerfile": "src/containers/Dockerfile.base",
-          "networks": {
-            "vxlan-nat": "172.20.2.20",
-            "nat-ipsec": "172.20.3.10"
+          "config_script": "nat-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "vxlan-nat",
+              "ip": {
+                "address": "172.20.2.20",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1",
+              "network": "nat-ipsec",
+              "ip": {
+                "address": "172.20.3.10",
+                "mask": 24
+              }
+            }
+          ],
+          "nat44": {
+            "sessions": 1024,
+            "static_mapping": {
+              "local_ip": "10.10.10.10",
+              "local_port": 2055,
+              "external_ip": "172.20.3.10",
+              "external_port": 2055
+            }
           }
         },
-        {
-          "name": "chain-ipsec",
+        "chain-ipsec": {
           "description": "IPsec encryption",
-          "config": "ipsec-config.sh",
           "dockerfile": "src/containers/ipsec/Dockerfile.ipsec",
-          "networks": {
-            "nat-ipsec": "172.20.3.20",
-            "ipsec-fragment": "172.20.4.10"
-          }
+          "config_script": "ipsec-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "nat-ipsec",
+              "ip": {
+                "address": "172.20.3.20",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1",
+              "network": "ipsec-fragment",
+              "ip": {
+                "address": "172.20.4.10",
+                "mask": 24
+              }
+            }
+          ],
+          "ipsec": {
+            "sa_in": {
+              "id": 2000,
+              "spi": 2000,
+              "crypto_alg": "aes-gcm-128",
+              "crypto_key": "4a506a794f574265564551694d653768"
+            },
+            "sa_out": {
+              "id": 1000,
+              "spi": 1000,
+              "crypto_alg": "aes-gcm-128",
+              "crypto_key": "4a506a794f574265564551694d653768"
+            },
+            "tunnel": {
+              "src": "172.20.3.20",
+              "dst": "172.20.4.20",
+              "local_ip": "10.100.100.1/30"
+            }
+          },
+          "routes": [
+            {
+              "to": "172.20.2.0/24",
+              "via": "172.20.3.10"
+            },
+            {
+              "to": "172.20.5.0/24",
+              "via": "ipip0"
+            },
+            {
+              "to": "172.20.0.0/24",
+              "via": "ipip0"
+            }
+          ]
         },
-        {
-          "name": "chain-fragment",
+        "chain-fragment": {
           "description": "IP fragmentation",
-          "config": "fragment-config.sh",
           "dockerfile": "src/containers/fragment/Dockerfile.fragment",
-          "networks": {
-            "ipsec-fragment": "172.20.4.20",
-            "fragment-gcp": "172.20.5.10"
-          }
+          "config_script": "fragment-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "ipsec-fragment",
+              "ip": {
+                "address": "172.20.4.20",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1",
+              "network": "fragment-gcp",
+              "ip": {
+                "address": "172.20.5.10",
+                "mask": 24
+              },
+              "mtu": 1400
+            }
+          ]
         },
-        {
-          "name": "chain-gcp",
+        "chain-gcp": {
           "description": "GCP destination endpoint",
-          "config": "gcp-config.sh",
           "dockerfile": "src/containers/Dockerfile.base",
-          "networks": {
-            "fragment-gcp": "172.20.5.20"
-          }
+          "config_script": "gcp-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "fragment-gcp",
+              "ip": {
+                "address": "172.20.5.20",
+                "mask": 24
+              }
+            }
+          ],
+          "tap_interface": {
+            "id": 0,
+            "name": "vpp-tap0",
+            "ip": "10.0.3.1/24",
+            "linux_ip": "10.0.3.2/24",
+            "pcap_file": "/tmp/gcp-received.pcap"
+          },
+          "routes": [
+            {
+              "to": "0.0.0.0/0",
+              "via": "172.20.5.1"
+            },
+            {
+              "to": "10.0.3.0/24",
+              "via": "tap0"
+            }
+          ]
         }
-      ],
+      },
       "connectivity_tests": [
         {
           "from": "chain-ingress",
@@ -137,139 +287,6 @@
         "inner_dst_port": 2055,
         "packet_count": 10,
         "packet_size": 8000,
-        "test_duration": 10
-      }
-    },
-    "aws": {
-      "networks": [
-        {
-          "name": "underlay",
-          "subnet": "172.31.0.0/20",
-          "gateway": "172.31.0.1",
-          "description": "Main underlay network for AWS"
-        },
-        {
-          "name": "chain-1-2",
-          "subnet": "10.0.1.0/24",
-          "gateway": "10.0.1.1",
-          "description": "Ingress → VXLAN for AWS"
-        },
-        {
-          "name": "chain-2-3",
-          "subnet": "10.0.2.0/24",
-          "gateway": "10.0.2.1",
-          "description": "VXLAN → NAT for AWS"
-        },
-        {
-          "name": "chain-3-4",
-          "subnet": "10.0.3.0/24",
-          "gateway": "10.0.3.1",
-          "description": "NAT → IPsec for AWS"
-        },
-        {
-          "name": "chain-4-5",
-          "subnet": "10.0.4.0/24",
-          "gateway": "10.0.4.1",
-          "description": "IPsec → Fragment for AWS"
-        }
-      ],
-      "containers": [
-        {
-          "name": "chain-ingress",
-          "description": "VXLAN packet reception (AWS)",
-          "config": "ingress-config.sh",
-          "dockerfile": "src/containers/ingress/Dockerfile.ingress",
-          "networks": {
-            "underlay": "172.31.1.10",
-            "chain-1-2": "10.0.1.1"
-          }
-        },
-        {
-          "name": "chain-vxlan",
-          "description": "VXLAN decapsulation (AWS)",
-          "config": "vxlan-config.sh",
-          "dockerfile": "src/containers/vxlan/Dockerfile.vxlan",
-          "networks": {
-            "chain-1-2": "10.0.1.2",
-            "chain-2-3": "10.0.2.1"
-          }
-        },
-        {
-          "name": "chain-nat",
-          "description": "NAT44 translation (AWS)",
-          "config": "nat-config.sh",
-          "dockerfile": "src/containers/Dockerfile.base",
-          "networks": {
-            "chain-2-3": "10.0.2.2",
-            "chain-3-4": "10.0.3.1"
-          }
-        },
-        {
-          "name": "chain-ipsec",
-          "description": "IPsec encryption (AWS)",
-          "config": "ipsec-config.sh",
-          "dockerfile": "src/containers/ipsec/Dockerfile.ipsec",
-          "networks": {
-            "chain-3-4": "10.0.3.2",
-            "chain-4-5": "10.0.4.1"
-          }
-        },
-        {
-          "name": "chain-fragment",
-          "description": "IP fragmentation (AWS)",
-          "config": "fragment-config.sh",
-          "dockerfile": "src/containers/fragment/Dockerfile.fragment",
-          "networks": {
-            "chain-4-5": "10.0.4.2",
-            "underlay": "172.31.1.20"
-          }
-        },
-        {
-          "name": "chain-gcp",
-          "description": "Destination endpoint (AWS)",
-          "config": "gcp-config.sh",
-          "dockerfile": "src/containers/Dockerfile.base",
-          "networks": {
-            "underlay": "172.31.1.30"
-          }
-        }
-      ],
-      "connectivity_tests": [
-        {
-          "from": "chain-ingress",
-          "to": "10.0.1.2",
-          "description": "Ingress → VXLAN (AWS)"
-        },
-        {
-          "from": "chain-vxlan",
-          "to": "10.0.2.2",
-          "description": "VXLAN → NAT (AWS)"
-        },
-        {
-          "from": "chain-nat",
-          "to": "10.0.3.2",
-          "description": "NAT → IPsec (AWS)"
-        },
-        {
-          "from": "chain-ipsec",
-          "to": "10.0.4.2",
-          "description": "IPsec → Fragment (AWS)"
-        },
-        {
-          "from": "chain-fragment",
-          "to": "172.31.1.30",
-          "description": "Fragment → GCP (AWS)"
-        }
-      ],
-      "traffic_config": {
-        "bridge_ip": "172.31.0.1",
-        "vxlan_port": 4789,
-        "vxlan_vni": 100,
-        "inner_src_ip": "10.0.10.5",
-        "inner_dst_ip": "10.0.10.10",
-        "inner_dst_port": 2055,
-        "packet_count": 10,
-        "packet_size": 1200,
         "test_duration": 10
       }
     }

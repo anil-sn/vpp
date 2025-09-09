@@ -3,31 +3,46 @@ set -e
 
 echo "--- Configuring NAT Container ---"
 
-# Create interfaces
-vppctl create host-interface name eth0
-vppctl set interface ip address host-eth0 172.20.2.20/24
-vppctl set interface state host-eth0 up
+# Parse config from environment variable
+if [ -z "$VPP_CONFIG" ]; then
+  echo "Error: VPP_CONFIG environment variable not set." >&2
+  exit 1
+fi
 
-vppctl create host-interface name eth1  
-vppctl set interface ip address host-eth1 172.20.3.10/24
-vppctl set interface state host-eth1 up
+# Function to get value from JSON
+get_json_value() {
+  echo "$VPP_CONFIG" | jq -r "$1"
+}
+
+# Configure interfaces
+for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
+  IF_NAME=$(get_json_value ".interfaces[$i].name")
+  IF_IP_ADDR=$(get_json_value ".interfaces[$i].ip.address")
+  IF_IP_MASK=$(get_json_value ".interfaces[$i].ip.mask")
+  
+  vppctl create host-interface name "$IF_NAME"
+  vppctl set interface ip address "host-$IF_NAME" "$IF_IP_ADDR/$IF_IP_MASK"
+  vppctl set interface state "host-$IF_NAME" up
+done
 
 # Enable NAT44 plugin
-vppctl nat44 plugin enable sessions 1024
+NAT_SESSIONS=$(get_json_value ".nat44.sessions")
+vppctl nat44 plugin enable sessions "$NAT_SESSIONS"
 
 # Configure NAT interfaces
 vppctl set interface nat44 in host-eth0
 vppctl set interface nat44 out host-eth1
 
 # Add address pool
-vppctl nat44 add address 172.20.3.10
+NAT_EXTERNAL_IP=$(get_json_value ".nat44.static_mapping.external_ip")
+vppctl nat44 add address "$NAT_EXTERNAL_IP"
 
-# Add static mapping for the test traffic
-vppctl nat44 add static mapping udp local 10.10.10.10 2055 external 172.20.3.10 2055
-
-# Set up routing
-vppctl ip route add 10.10.10.0/24 via 172.20.2.10 host-eth0
-vppctl ip route add 172.20.4.0/24 via 172.20.3.20 host-eth1
+# Add static mapping
+LOCAL_IP=$(get_json_value ".nat44.static_mapping.local_ip")
+LOCAL_PORT=$(get_json_value ".nat44.static_mapping.local_port")
+EXTERNAL_IP=$(get_json_value ".nat44.static_mapping.external_ip")
+EXTERNAL_PORT=$(get_json_value ".nat44.static_mapping.external_port")
+vppctl nat44 add static mapping udp local "$LOCAL_IP" "$LOCAL_PORT" external "$EXTERNAL_IP" "$EXTERNAL_PORT"
 
 echo "--- NAT configuration completed ---"
 vppctl show interface addr

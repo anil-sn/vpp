@@ -7,7 +7,7 @@ Handles Docker container lifecycle, VPP configuration, and debugging operations.
 import subprocess
 import time
 from pathlib import Path
-import yaml # Added for dynamic docker-compose.yml generation
+import yaml # Used for docker-compose.yml generation (legacy support)
 from .logger import get_logger, log_success, log_error, log_warning, log_info
 from .config_manager import ConfigManager
 
@@ -48,18 +48,22 @@ class ContainerManager:
                 compose_data["networks"][net["name"]]["ipam"]["config"][0]["gateway"] = net["gateway"]
 
         # Add containers
-        for container in self.CONTAINERS:
-            service_name = container["name"]
+        for container_name, container in self.CONTAINERS.items():
+            service_name = container_name
             networks_config = {}
-            for net_name, ip_address in container["networks"].items():
+            # Convert interfaces to networks config
+            for interface in container["interfaces"]:
+                net_name = interface["network"]
+                ip_address = interface["ip"]["address"]
                 networks_config[net_name] = {"ipv4_address": ip_address}
 
             depends_on = []
-            # Infer depends_on from the chain order defined in config.json
-            # Assumes a linear dependency where each container depends on the previous one.
-            current_index = self.CONTAINERS.index(container)
-            if current_index > 0:
-                depends_on.append(self.CONTAINERS[current_index - 1]["name"])
+            # Define dependency chain order manually since containers are now in a dict
+            chain_order = ["chain-ingress", "chain-vxlan", "chain-nat", "chain-ipsec", "chain-fragment", "chain-gcp"]
+            if container_name in chain_order:
+                current_index = chain_order.index(container_name)
+                if current_index > 0:
+                    depends_on.append(chain_order[current_index - 1])
 
             compose_data["services"][service_name] = {
                 "build": {
@@ -139,20 +143,20 @@ class ContainerManager:
             # Build specialized container images
             # Assumes specialized Dockerfiles are named Dockerfile.<container_type> (e.g., Dockerfile.vxlan)
             # and located in src/containers/<container_type>/
-            for container in self.CONTAINERS:
-                container_dockerfile_path = self.project_root / "src" / "containers" / container["name"].replace("chain-", "") / f"Dockerfile.{container['name'].replace('chain-', '')}"
+            for container_name, container in self.CONTAINERS.items():
+                container_dockerfile_path = self.project_root / "src" / "containers" / container_name.replace("chain-", "") / f"Dockerfile.{container_name.replace('chain-', '')}"
                 
                 if container_dockerfile_path.exists():
-                    log_info(f"Building specialized image for {container['name']}...")
+                    log_info(f"Building specialized image for {container_name}...")
                     result = subprocess.run([
                         "docker", "build", 
-                        "-t", f"{container['name']}:latest",
+                        "-t", f"{container_name}:latest",
                         "-f", str(container_dockerfile_path),
                         str(self.project_root)
                     ], capture_output=True, text=True, check=True)
-                    log_success(f"Specialized image for {container['name']} built successfully")
+                    log_success(f"Specialized image for {container_name} built successfully")
                 else:
-                    log_info(f"No specialized Dockerfile found for {container['name']}, using base image.")
+                    log_info(f"No specialized Dockerfile found for {container_name}, using base image.")
             
             log_success("All container images built successfully")
             return True
@@ -164,9 +168,8 @@ class ContainerManager:
             log_error(f"Image build failed: {e}")
             return False
     
-    def _run_single_container(self, container_info):
+    def _run_single_container(self, container_name, container_info):
         """Helper to run a single container and apply its VPP config."""
-        container_name = container_info["name"]
         log_info(f"Starting {container_name}...")
 
         # Construct docker run command
@@ -176,6 +179,10 @@ class ContainerManager:
             "-h", container_name,
             "--privileged"
         ]
+
+        # Add environment variable with container config
+        import json
+        run_command.extend(["-e", f"VPP_CONFIG={json.dumps(container_info)}"])
 
         # Add capabilities
         for cap in ["NET_ADMIN", "SYS_ADMIN", "IPC_LOCK"]:
@@ -195,8 +202,9 @@ class ContainerManager:
             run_command.extend(["-v", "/tmp/packet-captures:/tmp"])
 
         # Add primary network and IP
-        primary_network_name = list(container_info["networks"].keys())[0]
-        primary_ip_address = container_info["networks"][primary_network_name]
+        primary_interface = container_info["interfaces"][0]
+        primary_network_name = primary_interface["network"]
+        primary_ip_address = primary_interface["ip"]["address"]
         run_command.extend(["--network", primary_network_name, "--ip", primary_ip_address])
 
         # Add image name
@@ -207,9 +215,9 @@ class ContainerManager:
         log_success(f"{container_name} started.")
 
         # Connect to secondary networks
-        secondary_networks = list(container_info["networks"].keys())[1:]
-        for secondary_net_name in secondary_networks:
-            secondary_ip_address = container_info["networks"][secondary_net_name]
+        for interface in container_info["interfaces"][1:]:
+            secondary_net_name = interface["network"]
+            secondary_ip_address = interface["ip"]["address"]
             log_info(f"Connecting {container_name} to {secondary_net_name} with IP {secondary_ip_address}...")
             subprocess.run([
                 "docker", "network", "connect",
@@ -228,7 +236,7 @@ class ContainerManager:
         time.sleep(10) # Give VPP some time to start
         subprocess.run([
             "docker", "exec", container_name, "bash", "-c",
-            f"cd /vpp-config && ./{container_info['config']}"
+            f"cd /vpp-config && ./{container_info['config_script']}"
         ], capture_output=True, text=True, check=True)
         log_success(f"VPP configured for {container_name}.")
 
@@ -242,8 +250,8 @@ class ContainerManager:
         """Start all containers manually using docker run commands."""
         try:
             log_info("Starting container chain manually...")
-            for container_info in self.CONTAINERS:
-                self._run_single_container(container_info)
+            for container_name, container_info in sorted(self.CONTAINERS.items()):
+                self._run_single_container(container_name, container_info)
             log_success("All containers started and configured successfully!")
             return True
         except subprocess.CalledProcessError as e:
@@ -257,8 +265,10 @@ class ContainerManager:
         """Stop and remove all containers."""
         try:
             log_info("Stopping and removing container chain...")
-            for container_info in reversed(self.CONTAINERS):
-                self._stop_single_container(container_info["name"])
+            # Reverse the container order for stopping
+            container_items = list(self.CONTAINERS.items())
+            for container_name, container_info in reversed(container_items):
+                self._stop_single_container(container_name)
             log_success("All containers stopped and removed.")
             return True
         except Exception as e:
@@ -273,20 +283,20 @@ class ContainerManager:
             # Wait a bit more for VPP to fully initialize
             time.sleep(5)
             
-            for container in self.CONTAINERS:
-                log_info(f"Configuring {container['name']} ({container['description']})...")
+            for container_name, container in self.CONTAINERS.items():
+                log_info(f"Configuring {container_name} ({container['description']})...")
                 
                 # Execute configuration script in container
                 result = subprocess.run([
-                    "docker", "exec", container["name"],
-                    "bash", "-c", f"cd /vpp-config && ./{container['config']}"
+                    "docker", "exec", container_name,
+                    "bash", "-c", f"cd /vpp-config && ./{container['config_script']}"
                 ], capture_output=True, text=True)
                 
                 if result.returncode != 0:
-                    log_error(f"Configuration failed for {container['name']}: {result.stderr}")
+                    log_error(f"Configuration failed for {container_name}: {result.stderr}")
                     return False
                 
-                log_success(f"{container['name']} configured successfully")
+                log_success(f"{container_name} configured successfully")
             
             log_success("All VPP configurations applied successfully")
             return True
@@ -308,11 +318,11 @@ class ContainerManager:
             running_containers = set(result.stdout.strip().split('\n'))
             
             all_running = True
-            for container in self.CONTAINERS:
-                if container["name"] in running_containers:
-                    log_success(f"Container {container['name']} is running")
+            for container_name, container in self.CONTAINERS.items():
+                if container_name in running_containers:
+                    log_success(f"Container {container_name} is running")
                 else:
-                    log_error(f"Container {container['name']} is not running")
+                    log_error(f"Container {container_name} is not running")
                     all_running = False
             
             return all_running
@@ -327,24 +337,24 @@ class ContainerManager:
             log_info("Verifying VPP responsiveness...")
             
             all_responsive = True
-            for container in self.CONTAINERS:
+            for container_name, container in self.CONTAINERS.items():
                 try:
                     result = subprocess.run([
-                        "docker", "exec", container["name"], 
+                        "docker", "exec", container_name, 
                         "vppctl", "show", "version"
                     ], capture_output=True, text=True, timeout=10)
                     
                     if result.returncode == 0:
-                        log_success(f"VPP responsive in {container['name']}")
+                        log_success(f"VPP responsive in {container_name}")
                     else:
-                        log_error(f"VPP not responsive in {container['name']}")
+                        log_error(f"VPP not responsive in {container_name}")
                         all_responsive = False
                         
                 except subprocess.TimeoutExpired:
-                    log_error(f"VPP timeout in {container['name']}")
+                    log_error(f"VPP timeout in {container_name}")
                     all_responsive = False
                 except Exception as e:
-                    log_error(f"VPP check failed for {container['name']}: {e}")
+                    log_error(f"VPP check failed for {container_name}: {e}")
                     all_responsive = False
             
             return all_responsive
@@ -357,7 +367,7 @@ class ContainerManager:
         """Execute a VPP command in a specific container for debugging"""
         try:
             # Validate container name
-            valid_containers = [c["name"] for c in self.CONTAINERS]
+            valid_containers = list(self.CONTAINERS.keys())
             if container_name not in valid_containers:
                 log_error(f"Invalid container name: {container_name}")
                 log_info(f"Valid containers: {', '.join(valid_containers)}")
@@ -390,13 +400,13 @@ class ContainerManager:
             print("\n🐳 Container Status:")
             print("-" * 80)
             
-            for container in self.CONTAINERS:
-                print(f"\n📦 {container['name']} ({container['description']})")
+            for container_name, container in self.CONTAINERS.items():
+                print(f"\n📦 {container_name} ({container['description']})")
                 
                 # Check if running
                 try:
                     result = subprocess.run([
-                        "docker", "ps", "--filter", f"name={container['name']}",
+                        "docker", "ps", "--filter", f"name={container_name}",
                         "--format", "{{.Status}}"
                     ], capture_output=True, text=True)
                     
@@ -406,7 +416,7 @@ class ContainerManager:
                         # Get VPP interface stats
                         try:
                             vpp_result = subprocess.run([
-                                "docker", "exec", container["name"], 
+                                "docker", "exec", container_name, 
                                 "vppctl", "show", "interface"
                             ], capture_output=True, text=True, timeout=5)
                             
@@ -449,19 +459,19 @@ class ContainerManager:
                 print(f"\nMonitoring... ({int(time.time() - start_time)}/{duration}s)")
                 
                 # Quick status check - monitoring all containers
-                for container in self.CONTAINERS:
+                for container_name, container in self.CONTAINERS.items():
                     try:
                         result = subprocess.run([
-                            "docker", "exec", container["name"],
+                            "docker", "exec", container_name,
                             "vppctl", "show", "interface"
                         ], capture_output=True, text=True, timeout=5)
                         
                         if result.returncode == 0:
-                            print(f"   {container['name']}: Active")
+                            print(f"   {container_name}: Active")
                         else:
-                            print(f"   {container['name']}: Issue")
+                            print(f"   {container_name}: Issue")
                     except:
-                        print(f"   {container['name']}: Timeout")
+                        print(f"   {container_name}: Timeout")
                 
                 time.sleep(10)  # Update every 10 seconds
             
@@ -490,10 +500,10 @@ class ContainerManager:
                 "docker", "image", "rm", "vpp-chain-base:latest"
             ], capture_output=True, text=True)
 
-            for container in self.CONTAINERS:
+            for container_name, container in self.CONTAINERS.items():
                 try:
                     subprocess.run([
-                        "docker", "image", "rm", f"{container['name']}:latest"
+                        "docker", "image", "rm", f"{container_name}:latest"
                     ], capture_output=True, text=True)
                 except:
                     pass

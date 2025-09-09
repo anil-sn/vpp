@@ -147,14 +147,31 @@ class VPPChainManager:
     
     
     def _print_chain_status(self):
-        """Print the current chain topology and status.
-        Note: The topology is hardcoded for visual representation.
-        """
+        """Print the current chain topology and status using dynamic config values."""
+        # Get dynamic values from config
+        containers = self.config_manager.get_containers()
+        traffic_config = self.config_manager.get_traffic_config()
+        
+        # Get ingress IP
+        ingress_ip = "N/A"
+        for interface in containers["chain-ingress"]["interfaces"]:
+            if interface["network"] == "external-ingress":
+                ingress_ip = interface["ip"]["address"]
+                break
+        
+        # Get NAT mapping from config
+        nat_config = containers["chain-nat"]["nat44"]["static_mapping"]
+        nat_local = nat_config["local_ip"]
+        nat_external = nat_config["external_ip"]
+        
+        # Get VXLAN VNI and fragment MTU from config
+        vxlan_vni = traffic_config["vxlan_vni"]
+        
         print("\nVPP Multi-Container Chain Topology:")
         print("┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐")
         print("│   INGRESS   │───▶│   VXLAN     │───▶│    NAT44    │───▶│   IPSEC     │───▶│ FRAGMENT    │───▶ [GCP]")
-        print("│ 192.168.10.2│    │ Decap VNI   │    │ 10.10.10.10 │    │ AES-GCM-128 │    │  MTU 1400   │")
-        print("│             │    │    100      │    │ → 10.0.3.1  │    │ Encryption  │    │ IP Fragments│")
+        print(f"│ {ingress_ip:>11}│    │ Decap VNI   │    │ {nat_local:>11} │    │ AES-GCM-128 │    │  MTU 1400   │")
+        print(f"│             │    │    {vxlan_vni:<8}│    │ → {nat_external:<9} │    │ Encryption  │    │ IP Fragments│")
         print("└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘")
         print("        ▲                    │                    │                    │                    │")
         print("        │              VXLAN Decap         NAT Translation      IPsec ESP           IP Fragmentation")

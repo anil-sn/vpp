@@ -25,7 +25,8 @@ class NetworkManager:
             log_info("Setting up Docker networks...")
             
             for network in self.NETWORKS:
-                log_info(f"Creating network {network['name']} ({network['description']})")
+                description = network.get('description', network['subnet'])
+                log_info(f"Creating network {network['name']} ({description})")
                 
                 # Remove existing network if it exists
                 subprocess.run([
@@ -100,7 +101,14 @@ class NetworkManager:
             
             # Get IP of chain-ingress from config_manager
             containers = self.config_manager.get_containers()
-            ingress_ip = containers[0]["networks"]["underlay"] # Assuming ingress is the first container and has underlay network
+            
+            # Get ingress container IP from external-ingress network
+            ingress_container = containers["chain-ingress"]
+            ingress_ip = None
+            for interface in ingress_container["interfaces"]:
+                if interface["network"] == "external-ingress":
+                    ingress_ip = interface["ip"]["address"]
+                    break
 
             if not ingress_ip:
                 log_error("Could not determine IP for chain-ingress")
@@ -195,7 +203,8 @@ class NetworkManager:
                     ], capture_output=True, text=True)
                     
                     if result.returncode == 0:
-                        print(f"\n📡 {network['name']}: {network['subnet']} - {network['description']}")
+                        description = network.get('description', 'Network')
+                        print(f"\n📡 {network['name']}: {network['subnet']} - {description}")
                     else:
                         print(f"\n❌ {network['name']}: Not found")
                         

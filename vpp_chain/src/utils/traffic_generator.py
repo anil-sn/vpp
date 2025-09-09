@@ -29,8 +29,20 @@ class TrafficGenerator:
         
         # Dynamically set ingress_ip and gcp_ip based on current mode's container config
         containers = self.config_manager.get_containers()
-        self.CONFIG["ingress_ip"] = containers[0]["networks"]["external-ingress"]  # Send to INGRESS container on external network
-        self.CONFIG["gcp_ip"] = containers[-1]["networks"]["fragment-gcp"]
+        
+        # Get ingress container IP from external-ingress network
+        ingress_container = containers["chain-ingress"]
+        for interface in ingress_container["interfaces"]:
+            if interface["network"] == "external-ingress":
+                self.CONFIG["ingress_ip"] = interface["ip"]["address"]
+                break
+        
+        # Get GCP container IP from fragment-gcp network
+        gcp_container = containers["chain-gcp"]
+        for interface in gcp_container["interfaces"]:
+            if interface["network"] == "fragment-gcp":
+                self.CONFIG["gcp_ip"] = interface["ip"]["address"]
+                break
         
     def check_environment(self):
         """Verify that the environment is ready for traffic testing"""

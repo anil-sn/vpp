@@ -3,24 +3,45 @@ set -e
 
 echo "--- Configuring VXLAN Container ---"
 
-# Create host interfaces
-vppctl create host-interface name eth0
-vppctl set interface ip address host-eth0 172.20.1.20/24  
-vppctl set interface state host-eth0 up
+# Parse config from environment variable
+if [ -z "$VPP_CONFIG" ]; then
+  echo "Error: VPP_CONFIG environment variable not set." >&2
+  exit 1
+fi
 
-vppctl create host-interface name eth1
-vppctl set interface ip address host-eth1 172.20.2.10/24
-vppctl set interface state host-eth1 up
+# Function to get value from JSON
+get_json_value() {
+  echo "$VPP_CONFIG" | jq -r "$1"
+}
 
-# Create VXLAN tunnel for L3 decapsulation
-vppctl create vxlan tunnel src 172.20.1.20 dst 172.20.1.10 vni 100
+# Configure interfaces
+for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
+  IF_NAME=$(get_json_value ".interfaces[$i].name")
+  IF_IP_ADDR=$(get_json_value ".interfaces[$i].ip.address")
+  IF_IP_MASK=$(get_json_value ".interfaces[$i].ip.mask")
+  
+  vppctl create host-interface name "$IF_NAME"
+  vppctl set interface ip address "host-$IF_NAME" "$IF_IP_ADDR/$IF_IP_MASK"
+  vppctl set interface state "host-$IF_NAME" up
+done
+
+# Create VXLAN tunnel
+VXLAN_SRC=$(get_json_value ".vxlan_tunnel.src")
+VXLAN_DST=$(get_json_value ".vxlan_tunnel.dst")
+VXLAN_VNI=$(get_json_value ".vxlan_tunnel.vni")
+vppctl create vxlan tunnel src "$VXLAN_SRC" dst "$VXLAN_DST" vni "$VXLAN_VNI"
 vppctl set interface state vxlan_tunnel0 up
 
-# Since we're doing L3 processing, route the decapsulated packets
-# The VXLAN tunnel will decapsulate and forward to the routing table
-vppctl ip route add 10.10.10.0/24 via 172.20.2.20 host-eth1
+# Configure routes
+for i in $(seq 0 $(($(get_json_value '.routes | length') - 1))); do
+  ROUTE_TO=$(get_json_value ".routes[$i].to")
+  ROUTE_VIA=$(get_json_value ".routes[$i].via")
+  ROUTE_IF=$(get_json_value ".routes[$i].interface")
+  
+  vppctl ip route add "$ROUTE_TO" via "$ROUTE_VIA" "host-$ROUTE_IF"
+done
 
-echo "--- VXLAN configuration completed ---"  
+echo "--- VXLAN configuration completed ---"
 vppctl show interface addr
-vppctl show vxlan tunnel  
+vppctl show vxlan tunnel
 vppctl show ip fib

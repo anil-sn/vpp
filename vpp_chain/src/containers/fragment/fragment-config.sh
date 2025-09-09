@@ -1,45 +1,43 @@
 #!/bin/bash
 set -e
 
-echo "--- Configuring FRAGMENT Container (Simplified) ---
-"
+echo "--- Configuring FRAGMENT Container ---"
 
-# Create interface from IPsec container
-vppctl create host-interface name eth0
-vppctl set interface ip address host-eth0 172.20.4.20/24
-vppctl set interface state host-eth0 up
+# Parse config from environment variable
+if [ -z "$VPP_CONFIG" ]; then
+  echo "Error: VPP_CONFIG environment variable not set." >&2
+  exit 1
+fi
 
-# Create interface to underlay network (GCP)
-vppctl create host-interface name eth1
-vppctl set interface ip address host-eth1 172.20.5.10/24
-vppctl set interface state host-eth1 up
+# Function to get value from JSON
+get_json_value() {
+  echo "$VPP_CONFIG" | jq -r "$1"
+}
 
-# Set MTU on output interface to trigger fragmentation
-vppctl set interface mtu packet 1400 host-eth1
+# Configure interfaces
+for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
+  IF_NAME=$(get_json_value ".interfaces[$i].name")
+  IF_IP_ADDR=$(get_json_value ".interfaces[$i].ip.address")
+  IF_IP_MASK=$(get_json_value ".interfaces[$i].ip.mask")
+  IF_MTU=$(get_json_value ".interfaces[$i].mtu")
+  
+  vppctl create host-interface name "$IF_NAME"
+  vppctl set interface ip address "host-$IF_NAME" "$IF_IP_ADDR/$IF_IP_MASK"
+  vppctl set interface state "host-$IF_NAME" up
+  
+  if [ "$IF_MTU" != "null" ]; then
+    vppctl set interface mtu packet "$IF_MTU" "host-$IF_NAME"
+  fi
+done
 
+# Configure routes
+for i in $(seq 0 $(($(get_json_value '.routes | length') - 1))); do
+  ROUTE_TO=$(get_json_value ".routes[$i].to")
+  ROUTE_VIA=$(get_json_value ".routes[$i].via")
+  
+  vppctl ip route add "$ROUTE_TO" via "$ROUTE_VIA"
+done
 
-
-# Set up routing
-# Route to previous container (IPsec)
-vppctl ip route add 172.20.3.0/24 via 172.20.4.10
-
-# Route to GCP destination
-vppctl ip route add 172.20.5.20/32 via 172.20.5.1
-
-# Route all other traffic to underlay gateway
-vppctl ip route add 0.0.0.0/0 via 172.20.5.1
-
-echo "--- Fragment Interfaces (Simplified) ---
-"
+echo "--- FRAGMENT configuration completed ---"
 vppctl show interface addr
-
-echo "--- Fragment MTU Settings (Simplified) ---
-"
-vppctl show interface host-eth1 features
-
-echo "--- Fragment Routes (Simplified) ---
-"
 vppctl show ip fib
-
-echo "--- FRAGMENT Simplified configuration completed ---
-"

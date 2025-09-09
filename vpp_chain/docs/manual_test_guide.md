@@ -43,6 +43,7 @@ done
 for container in chain-ingress chain-vxlan chain-nat chain-ipsec chain-fragment chain-gcp; do
   echo "=== $container Interface Status ==="
   docker exec $container vppctl show interface
+  docker exec $container vppctl show interface address
   echo
 done
 

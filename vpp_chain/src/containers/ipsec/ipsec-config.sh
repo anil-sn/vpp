@@ -1,59 +1,72 @@
 #!/bin/bash
 set -e
 
-echo "--- Configuring IPsec Container (Simplified) ---"
+echo "--- Configuring IPsec Container ---"
 
-# Create interface from NAT container
-vppctl create host-interface name eth0
-vppctl set interface ip address host-eth0 172.20.3.20/24
-vppctl set interface state host-eth0 up
+# Parse config from environment variable
+if [ -z "$VPP_CONFIG" ]; then
+  echo "Error: VPP_CONFIG environment variable not set." >&2
+  exit 1
+fi
 
-# Create interface to Fragment container
-vppctl create host-interface name eth1
-vppctl set interface ip address host-eth1 172.20.4.10/24
-vppctl set interface state host-eth1 up
+# Function to get value from JSON
+get_json_value() {
+  echo "$VPP_CONFIG" | jq -r "$1"
+}
 
-# Configure IPsec Security Associations (SAs)
-# Outbound SA (encrypt)
-vppctl ipsec sa add 1000 spi 1000 esp \
-    crypto-alg aes-gcm-128 \
-    crypto-key 4a506a794f574265564551694d653768
+# Configure interfaces
+for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
+  IF_NAME=$(get_json_value ".interfaces[$i].name")
+  IF_IP_ADDR=$(get_json_value ".interfaces[$i].ip.address")
+  IF_IP_MASK=$(get_json_value ".interfaces[$i].ip.mask")
+  
+  vppctl create host-interface name "$IF_NAME"
+  vppctl set interface ip address "host-$IF_NAME" "$IF_IP_ADDR/$IF_IP_MASK"
+  vppctl set interface state "host-$IF_NAME" up
+done
 
-# Inbound SA (decrypt) 
-vppctl ipsec sa add 2000 spi 2000 esp \
-    crypto-alg aes-gcm-128 \
-    crypto-key 4a506a794f574265564551694d653768
+# Configure IPsec
+SA_IN_ID=$(get_json_value ".ipsec.sa_in.id")
+SA_IN_SPI=$(get_json_value ".ipsec.sa_in.spi")
+SA_IN_CRYPTO_ALG=$(get_json_value ".ipsec.sa_in.crypto_alg")
+SA_IN_CRYPTO_KEY=$(get_json_value ".ipsec.sa_in.crypto_key")
 
-# Create IPIP tunnel with IPsec protection
-vppctl create ipip tunnel src 172.20.3.20 dst 172.20.4.20
-vppctl ipsec tunnel protect ipip0 sa-in 2000 sa-out 1000
+SA_OUT_ID=$(get_json_value ".ipsec.sa_out.id")
+SA_OUT_SPI=$(get_json_value ".ipsec.sa_out.spi")
+SA_OUT_CRYPTO_ALG=$(get_json_value ".ipsec.sa_out.crypto_alg")
+SA_OUT_CRYPTO_KEY=$(get_json_value ".ipsec.sa_out.crypto_key")
+
+_TUNNEL_SRC=$(get_json_value ".ipsec.tunnel.src")
+_TUNNEL_DST=$(get_json_value ".ipsec.tunnel.dst")
+_TUNNEL_LOCAL_IP=$(get_json_value ".ipsec.tunnel.local_ip")
+
+vppctl ipsec sa add "$SA_OUT_ID" spi "$SA_OUT_SPI" esp \
+    crypto-alg "$SA_OUT_CRYPTO_ALG" \
+    crypto-key "$SA_OUT_CRYPTO_KEY"
+
+vppctl ipsec sa add "$SA_IN_ID" spi "$SA_IN_SPI" esp \
+    crypto-alg "$SA_IN_CRYPTO_ALG" \
+    crypto-key "$SA_IN_CRYPTO_KEY"
+
+vppctl create ipip tunnel src "$_TUNNEL_SRC" dst "$_TUNNEL_DST"
+vppctl ipsec tunnel protect ipip0 sa-in "$SA_IN_ID" sa-out "$SA_OUT_ID"
 vppctl set interface state ipip0 up
+vppctl set interface ip address ipip0 "$_TUNNEL_LOCAL_IP"
 
+# Configure routes
+for i in $(seq 0 $(($(get_json_value '.routes | length') - 1))); do
+  ROUTE_TO=$(get_json_value ".routes[$i].to")
+  ROUTE_VIA=$(get_json_value ".routes[$i].via")
+  
+  if [[ $ROUTE_VIA == "ipip0" ]]; then
+    vppctl ip route add "$ROUTE_TO" via ipip0
+  else
+    vppctl ip route add "$ROUTE_TO" via "$ROUTE_VIA"
+  fi
+done
 
-
-# Set IP address on tunnel interface
-vppctl set interface ip address ipip0 10.100.100.1/30
-
-# Set up routing
-# Route to previous container (NAT)
-vppctl ip route add 172.20.2.0/24 via 172.20.3.10
-
-# Route to next container (Fragment) via tunnel
-vppctl ip route add 172.20.5.0/24 via ipip0
-
-# Route specific traffic through tunnel
-vppctl ip route add 172.20.0.0/24 via ipip0
-
-echo "--- IPsec Interfaces (Simplified) ---"
+echo "--- IPsec configuration completed ---"
 vppctl show interface addr
-
-echo "--- IPsec SAs (Simplified) ---"
 vppctl show ipsec sa
-
-echo "--- IPsec Tunnels (Simplified) ---"
 vppctl show ipsec tunnel
-
-echo "--- IPsec Routes (Simplified) ---"
 vppctl show ip fib
-
-echo "--- IPsec Simplified configuration completed ---"

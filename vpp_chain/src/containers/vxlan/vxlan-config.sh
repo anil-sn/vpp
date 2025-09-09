@@ -13,7 +13,7 @@ vppctl set interface ip address host-eth1 172.20.2.10/24
 vppctl set interface state host-eth1 up
 
 # Create VXLAN tunnel for L3 decapsulation
-vppctl create vxlan tunnel src 172.20.1.20 dst 172.20.1.10 vni 100 decap-next ip4
+vppctl create vxlan tunnel src 172.20.1.20 dst 172.20.1.10 vni 100
 vppctl set interface state vxlan_tunnel0 up
 
 # Since we're doing L3 processing, route the decapsulated packets

@@ -144,6 +144,7 @@ class TrafficGenerator:
                 IP(src=self.CONFIG["vxlan_src_ip"], dst=self.CONFIG["vxlan_ip"]) /
                 UDP(sport=12345 + seq_num, dport=self.CONFIG["vxlan_port"]) /
                 VXLAN(vni=self.CONFIG["vxlan_vni"], flags=0x08) /
+                Ether(dst="02:fe:3e:2a:0d:90", src="00:00:40:11:4d:36") /
                 inner_packet
             )
             

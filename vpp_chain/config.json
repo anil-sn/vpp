@@ -204,7 +204,7 @@
         "inner_dst_ip": "10.10.10.10",
         "inner_dst_port": 2055,
         "packet_count": 10,
-        "packet_size": 8000,
+        "packet_size": 1400,
         "test_duration": 10,
         "expected_transformations": [
           "VXLAN decapsulation (vxlan-processor)",

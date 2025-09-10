@@ -204,14 +204,14 @@ Traffic Generator (Config-Driven)
 ### Phase 2: Consolidated Security Processing
 
 ```
-Input to Security-Processor: IP(10.10.10.5 → 10.10.10.10)/UDP(2055)/8KB_payload
+Input to Security-Processor: IP(10.10.10.5 → 10.10.10.10)/UDP(2055)/1.4KB_payload
 ```
 
 **SECURITY-PROCESSOR Processing**:
 1. **NAT44 Translation**:
    - **Input**: 10.10.10.10:2055
    - **Translation**: 10.10.10.10:2055 → 172.20.102.10:2055
-   - **Result**: IP(10.10.10.5 → 172.20.102.10)/UDP(2055)/8KB_payload
+   - **Result**: IP(10.10.10.5 → 172.20.102.10)/UDP(2055)/1.4KB_payload
 
 2. **IPsec ESP Encryption**:
    - **Algorithm**: AES-GCM-128 authenticated encryption
@@ -221,7 +221,7 @@ Input to Security-Processor: IP(10.10.10.5 → 10.10.10.10)/UDP(2055)/8KB_payloa
 
 3. **IP Fragmentation**:
    - **MTU Check**: Total packet size > 1400 bytes
-   - **Fragmentation**: Split into 6 fragments (8KB → 6 × ≤1400B fragments)
+   - **Fragmentation**: Split into 2 fragments (1.4KB → 2 × ≤1400B fragments)
    - **Headers**: Proper fragment offset and MF flag management
    - **Output**: Multiple encrypted fragments to destination
 
@@ -243,7 +243,7 @@ Input to Destination: Multiple fragmented ESP packets (≤1400 bytes each)
    - **IPIP Decapsulation**: Extract original packet
 
 3. **TAP Interface Forwarding**:
-   - **Final Packet**: IP(10.10.10.5 → 172.20.102.10)/UDP(2055)/8KB_payload
+   - **Final Packet**: IP(10.10.10.5 → 172.20.102.10)/UDP(2055)/1.4KB_payload
    - **TAP Write**: Forward to tap0 interface (10.0.3.1/24)
    - **Linux Integration**: Available to Linux network stack
    - **Capture**: Accessible via tcpdump, wireshark

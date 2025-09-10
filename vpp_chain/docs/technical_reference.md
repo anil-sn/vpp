@@ -113,7 +113,7 @@ UDP: src_port=12345+seq → dst_port=4789
 VXLAN: VNI=100, flags=0x08
 IP Inner: 10.10.10.5 → 10.10.10.10  
 UDP Inner: src_port=1234+seq → dst_port=2055
-Payload: 8000 bytes (triggers fragmentation)
+Payload: 1400 bytes (triggers fragmentation)
 ```
 
 **1.2 VXLAN Reception & Processing**
@@ -169,7 +169,7 @@ ARP Resolution: 172.20.101.20 ↔ security-processor MAC address
 ```
 host-eth0 Interface (172.20.101.20):
 ├── Receives decapsulated inner packet
-├── Packet: IP(10.10.10.5 → 10.10.10.10)/UDP(2055)/Payload(8000B)
+├── Packet: IP(10.10.10.5 → 10.10.10.10)/UDP(2055)/Payload(1400B)
 ├── af-packet-input: Packet enters VPP processing
 ├── Ethernet-input: Validates L2 headers  
 ├── IP4-input: Processes inner IP headers
@@ -194,7 +194,7 @@ NAT44 Static Mapping:
 Post-NAT Packet:
 IP: 10.10.10.5 → 172.20.102.10
 UDP: 1234+seq → 2055  
-Payload: 8000 bytes (unchanged)
+Payload: 1400 bytes (unchanged)
 ```
 
 **3.2 IPsec ESP Encryption**
@@ -240,13 +240,9 @@ Fragmentation Process:
 ├── Adjust: Fragment offset and MF flag per fragment
 └── Forward: Each fragment to host-eth1 interface
 
-Example 8000-byte packet fragmentation:
-├── Fragment 1: Offset 0, MF=1, Size=1400B
-├── Fragment 2: Offset 1400, MF=1, Size=1400B  
-├── Fragment 3: Offset 2800, MF=1, Size=1400B
-├── Fragment 4: Offset 4200, MF=1, Size=1400B
-├── Fragment 5: Offset 5600, MF=1, Size=1400B
-└── Fragment 6: Offset 7000, MF=0, Size=1000B (final)
+Example 1450-byte packet fragmentation:
+├── Fragment 1: Offset 0, MF=1, Size=1376B  
+└── Fragment 2: Offset 1376, MF=0, Size=74B (final)
 ```
 
 ### Phase 4: SECURITY-PROCESSOR → DESTINATION
@@ -285,7 +281,7 @@ ESP Processing:
 Decrypted Packet:
 IP: 10.10.10.5 → 172.20.102.10 (post-NAT addresses)
 UDP: 1234+seq → 2055
-Payload: 8000 bytes (reassembled)
+Payload: 1400 bytes (reassembled)
 ```
 
 **5.2 TAP Interface Processing**
@@ -341,7 +337,7 @@ Linux Network Stack
 - **Total Processing**: ~10-20 μs end-to-end latency
 
 **Packet Transformations:**
-1. **Size**: 8000B → fragmented → reassembled → 8000B
+1. **Size**: 1400B → fragmented → reassembled → 1400B
 2. **Headers**: VXLAN → IP → NAT → ESP → IPIP → Final IP
 3. **Addresses**: Multiple translation stages preserve data integrity
 4. **Security**: Encryption provides confidentiality and authentication

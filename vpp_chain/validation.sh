@@ -119,7 +119,7 @@ validate_core_functions() {
     log_header "IPsec Processing Validation"
     
     # 5. IPsec SA Configuration
-    if docker exec security-processor vppctl show ipsec sa 2>/dev/null | grep -q -E "(AES-GCM|aes-gcm)"; then
+    if docker exec security-processor vppctl show ipsec sa detail 2>/dev/null | grep -q -E "(aes-gcm-128|AES-GCM|aes-gcm)"; then
         log_success "IPsec SA configured with AES-GCM encryption"
         PASSED_TESTS=$((PASSED_TESTS + 1))
     else
@@ -137,7 +137,7 @@ validate_core_functions() {
     fi
     
     # 7. Destination IPsec SA
-    if docker exec destination vppctl show ipsec sa 2>/dev/null | grep -q -E "(AES-GCM|aes-gcm)"; then
+    if docker exec destination vppctl show ipsec sa detail 2>/dev/null | grep -q -E "(aes-gcm-128|AES-GCM|aes-gcm)"; then
         log_success "Destination IPsec SA configured for decryption"
         PASSED_TESTS=$((PASSED_TESTS + 1))
     else

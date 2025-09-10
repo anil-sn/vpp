@@ -221,16 +221,16 @@ class NetworkManager:
                         ], capture_output=True, text=True, timeout=5)
                         
                         if route_result.returncode == 0 and "dpo-drop" not in route_result.stdout:
-                            log_success(f"{test['description']}: ✅ VPP route exists")
+                            log_success(f"{test['description']}: VPP route exists")
                         else:
-                            log_warning(f"{test['description']}: ⚠️ VPP route not optimal (expected with VPP interfaces)")
+                            log_warning(f"{test['description']}: VPP route not optimal (expected with VPP interfaces)")
                     else:
-                        log_warning(f"{test['description']}: ⚠️ VPP connectivity test skipped (expected behavior)")
+                        log_warning(f"{test['description']}: VPP connectivity test skipped (expected behavior)")
                         
                 except subprocess.TimeoutExpired:
-                    log_warning(f"{test['description']}: ⚠️ VPP test timeout (expected with VPP interfaces)")
+                    log_warning(f"{test['description']}: VPP test timeout (expected with VPP interfaces)")
                 except Exception as e:
-                    log_warning(f"{test['description']}: ⚠️ VPP test skipped: {e}")
+                    log_warning(f"{test['description']}: VPP test skipped: {e}")
             
             # Since VPP manages interfaces, connectivity "failures" are expected
             # The real test is whether VPP is responsive and configured
@@ -265,12 +265,12 @@ class NetworkManager:
                     
                     if result.returncode == 0:
                         description = network.get('description', 'Network')
-                        print(f"\n📡 {network['name']}: {network['subnet']} - {description}")
+                        print(f"\n{network['name']}: {network['subnet']} - {description}")
                     else:
-                        print(f"\n❌ {network['name']}: Not found")
+                        print(f"\n{network['name']}: Not found")
                         
                 except Exception:
-                    print(f"\n❌ {network['name']}: Error getting details")
+                    print(f"\n{network['name']}: Error getting details")
             
             return True
             
@@ -317,7 +317,7 @@ class NetworkManager:
             if issues_found:
                 log_error("Connectivity issues found:")
                 for issue in issues_found:
-                    print(f"   ❌ {issue}")
+                    print(f"   {issue}")
                 return False
             else:
                 log_success("No connectivity issues detected")

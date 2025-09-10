@@ -26,6 +26,10 @@ for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
   vppctl set interface state "host-$IF_NAME" up
 done
 
+# Add secondary IP for NAT-translated traffic (172.20.102.10)
+echo "Adding secondary IP for NAT-translated traffic: 172.20.102.10/24"
+vppctl set interface ip address host-eth0 172.20.102.10/24
+
 # Configure TAP interface
 TAP_ID=$(get_json_value ".tap_interface.id")
 TAP_NAME=$(get_json_value ".tap_interface.name")

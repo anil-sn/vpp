@@ -5,20 +5,20 @@
       "networks": [
         {
           "name": "external-traffic",
-          "subnet": "192.168.100.0/24",
-          "gateway": "192.168.100.1",
+          "subnet": "172.20.100.0/24",
+          "gateway": "172.20.100.1",
           "description": "External VXLAN traffic ingress (isolated from host)"
         },
         {
           "name": "vxlan-processing",
-          "subnet": "192.168.101.0/24",
-          "gateway": "192.168.101.1",
+          "subnet": "172.20.101.0/24",
+          "gateway": "172.20.101.1",
           "description": "VXLAN to Security Processor communication (isolated)"
         },
         {
           "name": "processing-destination",
-          "subnet": "192.168.102.0/24",
-          "gateway": "192.168.102.1",
+          "subnet": "172.20.102.0/24",
+          "gateway": "172.20.102.1",
           "description": "Security Processor to Destination communication (isolated)"
         }
       ],
@@ -32,7 +32,7 @@
               "name": "eth0",
               "network": "external-traffic",
               "ip": {
-                "address": "192.168.100.10",
+                "address": "172.20.100.10",
                 "mask": 24
               }
             },
@@ -40,26 +40,26 @@
               "name": "eth1",
               "network": "vxlan-processing",
               "ip": {
-                "address": "192.168.101.10",
+                "address": "172.20.101.10",
                 "mask": 24
               }
             }
           ],
           "vxlan_tunnel": {
-            "src": "172.20.0.10",
-            "dst": "172.20.0.1",
+            "src": "172.20.100.10",
+            "dst": "172.20.100.1",
             "vni": 100,
-            "decap_next": "l2-input"
+            "decap_next": "l2"
           },
           "routes": [
             {
               "to": "10.10.10.0/24",
-              "via": "192.168.101.20",
+              "via": "172.20.101.20",
               "interface": "eth1"
             },
             {
-              "to": "192.168.102.0/24",
-              "via": "192.168.101.20",
+              "to": "172.20.102.0/24",
+              "via": "172.20.101.20",
               "interface": "eth1"
             }
           ]
@@ -73,7 +73,7 @@
               "name": "eth0",
               "network": "vxlan-processing",
               "ip": {
-                "address": "192.168.101.20",
+                "address": "172.20.101.20",
                 "mask": 24
               }
             },
@@ -81,7 +81,7 @@
               "name": "eth1",
               "network": "processing-destination",
               "ip": {
-                "address": "192.168.102.10",
+                "address": "172.20.102.10",
                 "mask": 24
               },
               "mtu": 1400
@@ -92,7 +92,7 @@
             "static_mapping": {
               "local_ip": "10.10.10.10",
               "local_port": 2055,
-              "external_ip": "192.168.102.10",
+              "external_ip": "172.20.102.10",
               "external_port": 2055
             },
             "inside_interface": "eth0",
@@ -112,8 +112,8 @@
               "crypto_key": "4a506a794f574265564551694d653768"
             },
             "tunnel": {
-              "src": "192.168.101.20",
-              "dst": "192.168.102.20",
+              "src": "172.20.101.20",
+              "dst": "172.20.102.20",
               "local_ip": "10.100.100.1/30",
               "remote_ip": "10.100.100.2/30"
             }
@@ -124,8 +124,8 @@
           },
           "routes": [
             {
-              "to": "192.168.102.0/24",
-              "via": "192.168.102.1",
+              "to": "172.20.102.0/24",
+              "via": "172.20.102.1",
               "interface": "eth1"
             },
             {
@@ -143,7 +143,7 @@
               "name": "eth0",
               "network": "processing-destination",
               "ip": {
-                "address": "192.168.102.20",
+                "address": "172.20.102.20",
                 "mask": 24
               }
             }
@@ -170,7 +170,7 @@
           "routes": [
             {
               "to": "0.0.0.0/0",
-              "via": "192.168.102.1"
+              "via": "172.20.102.1"
             },
             {
               "to": "10.0.3.0/24",
@@ -186,19 +186,16 @@
       "connectivity_tests": [
         {
           "from": "vxlan-processor",
-          "to": "192.168.101.20",
+          "to": "172.20.101.20",
           "description": "VXLAN → Security Processor"
         },
         {
           "from": "security-processor", 
-          "to": "192.168.102.20",
+          "to": "172.20.102.20",
           "description": "Security Processor → Destination"
         }
       ],
       "traffic_config": {
-        "vxlan_ip": "192.168.100.10",
-        "security_ip": "192.168.101.20", 
-        "destination_ip": "192.168.102.20",
         "vxlan_port": 4789,
         "vxlan_vni": 100,
         "inner_src_ip": "10.10.10.5",

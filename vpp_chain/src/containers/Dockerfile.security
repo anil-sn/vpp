@@ -37,9 +37,11 @@ RUN apt-get update && \
 RUN mkdir -p /etc/vpp /var/log/vpp /run/vpp /vpp-config \
     && chmod 755 /etc/vpp /var/log/vpp /run/vpp
 
-# Copy VPP configuration
+# Copy VPP configuration and common startup script
 COPY src/containers/security-config.sh /vpp-config/
-RUN chmod +x /vpp-config/security-config.sh
+COPY src/configs/start-vpp.sh /vpp-common/start-vpp.sh
+COPY src/configs/startup.conf /vpp-common/startup.conf
+RUN chmod +x /vpp-config/security-config.sh && chmod +x /vpp-common/start-vpp.sh && mkdir -p /vpp-common
 
 # Create VPP startup configuration for security processing
 RUN echo "unix {" > /etc/vpp/startup.conf && \

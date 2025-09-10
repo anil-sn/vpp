@@ -1,4 +1,4 @@
-# VPP Multi-Container Chain: Consolidated Network Processing Pipeline
+# VPP Multi-Container Chain: High-Performance Network Processing Pipeline
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![Docker](https://img.shields.io/badge/Docker-20.10+-blue.svg)](https://docker.com)
@@ -7,396 +7,588 @@
 
 ## Overview
 
-This project showcases a high-performance, consolidated network processing pipeline using Vector Packet Processing (VPP) v24.10-release distributed across three specialized Docker containers. The optimized architecture implements VXLAN decapsulation, Network Address Translation (NAT44), IPsec encryption, and packet fragmentation with 50% reduced resource footprint while maintaining full functionality.
+This project demonstrates a **high-performance, fully config-driven network processing pipeline** using Vector Packet Processing (VPP) v24.10-release distributed across three specialized Docker containers. The optimized architecture implements **VXLAN decapsulation**, **Network Address Translation (NAT44)**, **IPsec ESP encryption**, and **IP fragmentation** with a **50% resource footprint reduction** while maintaining complete functionality.
 
-### Architecture and Processing Flow
+### Key Features
 
-The optimized architecture consists of three specialized Docker containers that provide comprehensive network processing. Data flows through this efficient chain in the following sequence:
+- ✅ **Fully Config-Driven**: All network topology, IPs, and settings driven from `config.json`
+- ✅ **No Hardcoded Values**: Dynamic configuration loading for complete flexibility
+- ✅ **Container-Isolated Networks**: VM management connectivity preserved 
+- ✅ **VPP Host Protection**: `no-pci` configuration prevents interface stealing
+- ✅ **Consolidated Architecture**: 3-container design vs traditional 6-container setup
+- ✅ **End-to-End Testing**: Comprehensive traffic generation and validation
+- ✅ **Step-by-Step Debugging**: Per-container packet flow analysis
 
-1.  **VXLAN-PROCESSOR (vxlan-processor):** Receives incoming VXLAN-encapsulated UDP traffic on 172.20.0.10:4789 and decapsulates VXLAN packets targeting VNI 100 to extract inner IP packets
-2.  **SECURITY-PROCESSOR (security-processor):** Consolidated processing container that performs:
-    - NAT44 translation mapping inner packet addresses (10.10.10.10:2055 → 172.20.2.10:2055)
-    - IPsec ESP encryption with AES-GCM-128 in an IPIP tunnel
-    - IP fragmentation for packets exceeding MTU of 1400 bytes
-3.  **DESTINATION (destination):** Final destination endpoint that receives processed and reassembled packets via TAP interface with packet capture capabilities
+## Architecture Overview
 
-### Container and Network Setup
+### Container Processing Pipeline
 
-The project uses Python-based container management to orchestrate the three containers. Each container is connected via dedicated Docker networks in a streamlined topology:
+```
+VXLAN-PROCESSOR → SECURITY-PROCESSOR → DESTINATION
+     ↓                    ↓                 ↓
+VXLAN Decap         NAT44 + IPsec      TAP Interface
+ VNI 100           + Fragmentation      & Capture
+```
 
-*   **external-traffic (172.20.0.0/24):** Main network for VXLAN traffic ingress
-*   **vxlan-processing (172.20.1.0/24):** Connects VXLAN-PROCESSOR to SECURITY-PROCESSOR
-*   **processing-destination (172.20.2.0/24):** Connects SECURITY-PROCESSOR to DESTINATION
+### Three-Container Design
 
-### Project Structure
+1. **VXLAN-PROCESSOR** (`vxlan-processor`)
+   - **Purpose**: VXLAN decapsulation and L2 bridging
+   - **Networks**: `external-traffic` (172.20.100.x), `vxlan-processing` (172.20.101.x)
+   - **Function**: Receives VXLAN packets (VNI 100), decapsulates inner IP packets
 
-The project is organized with the following key components:
+2. **SECURITY-PROCESSOR** (`security-processor`)
+   - **Purpose**: Consolidated security processing
+   - **Networks**: `vxlan-processing` (172.20.101.x), `processing-destination` (172.20.102.x)
+   - **Functions**: NAT44 translation + IPsec ESP AES-GCM-128 + IP fragmentation (MTU 1400)
 
-*   `README.md`: Provides a comprehensive overview of the project.
-*   `config.json`: Centralized configuration for the 3-container architecture.
-*   `src/main.py`: The main command-line interface for managing the setup, running tests, and debugging.
-*   `src/utils/`: Contains Python modules for container management, network setup, and traffic generation.
-*   `src/containers/`: Contains VPP configuration scripts and Dockerfiles for each container type.
+3. **DESTINATION** (`destination`)
+   - **Purpose**: Final packet capture and processing
+   - **Networks**: `processing-destination` (172.20.102.x)
+   - **Function**: TAP interface bridge (10.0.3.1/24) with packet capture
 
-### Use Cases
+### Network Topology (Config-Driven)
 
-This project is a practical demonstration of several cloud networking scenarios, including:
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        HOST SYSTEM                                  │
+│  Docker Bridge Networks (Isolated from VM Management):              │
+│  ├── external-traffic      (172.20.100.0/24, GW: 172.20.100.1)    │
+│  ├── vxlan-processing      (172.20.101.0/24, GW: 172.20.101.1)    │
+│  └── processing-destination (172.20.102.0/24, GW: 172.20.102.1)    │
+│                                                                     │
+│  VM Management Network: 10.168.0.x (Unaffected)                   │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-*   **Multi-Cloud Connectivity:** Establishing secure tunnels between different cloud environments (e.g., AWS and GCP).
-*   **Network Function Virtualization (NFV):** Chaining together modular network services.
-*   **Microservices Networking:** Optimizing the data plane for service meshes.
-*   **Edge Computing:** High-performance packet processing at the network edge.
-*   **Security Gateway:** Combining NAT and IPsec for enterprise-grade traffic security.
-
-It is a valuable resource for anyone interested in advanced cloud networking, NFV, and network security.
-
-### Architecture
+### Visual Architecture
 
 ```
 ┌─────────────┐    ┌─────────────────────────────────────┐    ┌─────────────┐
 │VXLAN-PROC   │───▶│        SECURITY-PROCESSOR           │───▶│DESTINATION  │
-│172.20.0.10  │    │         172.20.1.20                 │    │172.20.2.20  │
-│   Receives  │    │┌─────────┬─────────┬─────────────┐   │    │ TAP Bridge  │
-│VXLAN Traffic│    ││  NAT44  │ IPsec   │Fragmentation│   │    │  10.0.3.1   │
-│ UDP:4789    │    ││10.10.10.│AES-GCM  │  MTU 1400   │   │    │  Receives   │
-│             │    ││10→172.20││ -128    │ IP Fragments│   │    │& Captures   │
-│ Decap VNI   │    ││ .2.10   │ESP Tunn.│Large Packets│   │    │Final Packets│
-│    100      │    │└─────────┴─────────┴─────────────┘   │    │             │
+│172.20.100.10│    │┌─────────┬─────────┬─────────────┐   │    │172.20.102.20│
+│ Receives    │    ││  NAT44  │ IPsec   │Fragmentation│   │    │ TAP Bridge  │
+│VXLAN VNI 100│    ││10.10.10.10│AES-GCM  │  MTU 1400   │   │    │  10.0.3.1   │
+│ Decap L2    │    ││→172.20.102.10││ -128    │ IP Fragments│   │    │  Captures   │
+│             │    │└─────────┴─────────┴─────────────┘   │    │Final Packets│
 └─────────────┘    └─────────────────────────────────────┘    └─────────────┘
         ▲                              │                                │
         │                       Consolidated                      TAP Interface
         │                      Security Functions                 Packet Capture
-        │                                                        & Linux Bridge
+        │
 ┌─────────────┐
 │   Traffic   │
 │ Generator   │  
-│ Python/Scapy│
-│ Large Pkts  │
-│ 8KB Payload │
+│ (Config-    │
+│  Driven)    │
 └─────────────┘
 ```
 
-### Processing Flow
+## Complete Packet Flow
 
-1. **VXLAN-PROCESSOR (172.20.0.10)**: Receives VXLAN-encapsulated UDP traffic on port 4789 and decapsulates VXLAN packets (VNI 100) to extract inner IP packets
-2. **SECURITY-PROCESSOR (172.20.1.20)**: Consolidated processing that performs:
-   - NAT44 translation of inner packet addresses (10.10.10.10:2055 → 172.20.2.10:2055)
-   - IPsec ESP encryption with AES-GCM-128 in an IPIP tunnel (172.20.1.20 → 172.20.2.20)
-   - IP fragmentation for large packets exceeding 1400 byte MTU
-3. **DESTINATION (172.20.2.20)**: Final destination with TAP interface bridge (10.0.3.1/24) for packet capture and Linux integration
+**End-to-End Processing Chain:**
+
+1. **Traffic Generator** → **VXLAN-PROCESSOR**
+   ```
+   VXLAN: IP(172.20.100.1→172.20.100.10)/UDP(4789)/VXLAN(VNI=100)/IP(10.10.10.5→10.10.10.10)/UDP(2055)
+   ```
+
+2. **VXLAN-PROCESSOR** → **SECURITY-PROCESSOR**
+   ```
+   Decapsulated: IP(10.10.10.5→10.10.10.10)/UDP(2055) [via L2 bridge]
+   ```
+
+3. **SECURITY-PROCESSOR Processing**
+   - **NAT44**: `10.10.10.10:2055` → `172.20.102.10:2055`
+   - **IPsec**: Encrypt in IPIP tunnel `172.20.101.20` → `172.20.102.20`
+   - **Fragmentation**: Split packets > 1400 bytes MTU
+
+4. **SECURITY-PROCESSOR** → **DESTINATION**
+   ```
+   Encrypted: IP(172.20.101.20→172.20.102.20)/ESP(AES-GCM-128)[fragmented]
+   ```
+
+5. **DESTINATION** → **TAP Interface**
+   ```
+   Final: Decrypted and reassembled packets on 10.0.3.1/24 TAP bridge
+   ```
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Ubuntu 20.04+** or similar Linux distribution
-- **Docker 20.10+** with docker-compose
+- **Ubuntu 20.04+** or compatible Linux distribution
+- **Docker 20.10+** with container runtime
 - **Python 3.8+** with pip
-- **Root access** (required for network configuration)
-- **4GB+ RAM** required for optimized 3-container VPP setup
+- **Root/sudo access** (required for network and container operations)
+- **4GB+ RAM** for optimal VPP operation
 
 ### Installation
 
 ```bash
-# Clone the repository
+# Clone repository
 git clone <repository-url>
 cd vpp_chain
 
 # Install Python dependencies
 sudo apt update
-sudo apt install -y python3-pip python3-scapy
+sudo apt install -y python3-pip python3-scapy jq
 pip3 install docker
 
-# Verify requirements
+# Verify installation
 sudo python3 src/main.py --help
 ```
 
 ### Basic Usage
 
 ```bash
-# 1. Setup the multi-container chain
+# 1. Setup the complete chain
 sudo python3 src/main.py setup
 
-# 2. Verify the setup
-sudo python3 src/main.py status
+# 2. Verify all containers and VPP instances
+python3 src/main.py status
 
-# 3. Run traffic tests
+# 3. Run comprehensive tests
 sudo python3 src/main.py test
 
-# 4. Debug individual containers
-sudo python3 src/main.py debug chain-vxlan "show vxlan tunnel"
+# 4. Debug specific container
+sudo python3 src/main.py debug vxlan-processor "show vxlan tunnel"
 
-# 5. Clean up when done
+# 5. Clean up environment
 sudo python3 src/main.py cleanup
 ```
 
-## Detailed Commands
+## Comprehensive Command Reference
 
 ### Setup and Management
 
 ```bash
-# Setup with forced rebuild
+# Standard setup
+sudo python3 src/main.py setup
+
+# Force rebuild (recommended after config changes)
 sudo python3 src/main.py setup --force
 
-# Show current chain status
+# Check status (no root required)
 python3 src/main.py status
 
-# Monitor chain for 2 minutes
+# Monitor for specified duration
 python3 src/main.py monitor --duration 120
+
+# Complete cleanup
+sudo python3 src/main.py cleanup
 ```
 
-### Testing
+### Testing Suite
 
 ```bash
-# Run full test suite (connectivity + traffic)
+# Full test suite (connectivity + traffic)
 sudo python3 src/main.py test
 
-# Test only connectivity
-sudo python3 src/main.py test --type connectivity  
+# Test only inter-container connectivity
+sudo python3 src/main.py test --type connectivity
 
-# Test only traffic generation
+# Test only end-to-end traffic processing
 sudo python3 src/main.py test --type traffic
+
+# Python unit tests
+python3 -m unittest discover tests/ -v
+
+# Specific test modules
+python3 -m unittest tests.test_integration -v
+python3 -m unittest tests.test_container_manager -v
 ```
 
-### Debugging
+### Container Debugging
 
 ```bash
-# Debug VXLAN decapsulation
-sudo python3 src/main.py debug vxlan-processor "show vxlan tunnel"
+# VXLAN Processor debugging
+sudo python3 src/main.py debug vxlan-processor "show interface"
+sudo python3 src/main.py debug vxlan-processor "show vxlan tunnel" 
+sudo python3 src/main.py debug vxlan-processor "show bridge-domain 1 detail"
 
-# Check consolidated security processing
+# Security Processor debugging
 sudo python3 src/main.py debug security-processor "show nat44 sessions"
 sudo python3 src/main.py debug security-processor "show ipsec sa"
 sudo python3 src/main.py debug security-processor "show ipip tunnel"
+sudo python3 src/main.py debug security-processor "show interface"
 
-# Check destination and packet capture
+# Destination debugging
 sudo python3 src/main.py debug destination "show interface"
 sudo python3 src/main.py debug destination "show trace"
+sudo python3 src/main.py debug destination "show tap"
 
-# View packet traces
-sudo python3 src/main.py debug vxlan-processor "show trace"
+# Direct VPP CLI access
+docker exec -it vxlan-processor vppctl
+docker exec -it security-processor vppctl  
+docker exec -it destination vppctl
 ```
 
-## Container Architecture
+### Advanced Debugging
 
-### Container Specifications
+```bash
+# Enable packet tracing
+docker exec vxlan-processor vppctl trace add af-packet-input 10
+docker exec security-processor vppctl trace add af-packet-input 10
+docker exec destination vppctl trace add af-packet-input 10
 
-| Container | Role | Networks | Key Configuration |
-|-----------|------|----------|-------------------|
-| **vxlan-processor** | VXLAN Decapsulation | external-traffic, vxlan-processing | Receives VXLAN on 172.20.0.10:4789, decaps VNI 100 |
-| **security-processor** | Security Functions | vxlan-processing, processing-destination | NAT44 + IPsec ESP + Fragmentation (172.20.1.20) |
-| **destination** | Packet Capture | processing-destination | TAP interface bridge to 10.0.3.1/24, packet capture |
+# View traces
+docker exec vxlan-processor vppctl show trace
+docker exec security-processor vppctl show trace
+docker exec destination vppctl show trace
 
-### Network Topology
+# Clear traces
+docker exec vxlan-processor vppctl clear trace
+docker exec security-processor vppctl clear trace
+docker exec destination vppctl clear trace
 
+# Interface statistics
+for container in vxlan-processor security-processor destination; do
+  echo "=== $container Interface Statistics ==="
+  docker exec $container vppctl show interface
+  echo
+done
 ```
-Networks:
-├── external-traffic (172.20.0.0/24)        # VXLAN traffic ingress
-├── vxlan-processing (172.20.1.0/24)        # VXLAN → Security Processing
-└── processing-destination (172.20.2.0/24)  # Security → Destination
+
+## Configuration Management
+
+### Config-Driven Architecture
+
+**Everything is driven from `config.json`:**
+
+- **Network Topology**: All subnets, gateways, and IP assignments
+- **Container Configuration**: Interface mappings, security settings
+- **VXLAN Settings**: VNI, tunnel endpoints, decapsulation
+- **NAT44 Configuration**: Static mappings, interface assignments
+- **IPsec Parameters**: SA configuration, encryption algorithms
+- **Traffic Generation**: Source/destination IPs, ports, packet sizes
+
+### Configuration Structure
+
+```json
+{
+  "default_mode": "gcp",
+  "modes": {
+    "gcp": {
+      "networks": [
+        {
+          "name": "external-traffic",
+          "subnet": "172.20.100.0/24",
+          "gateway": "172.20.100.1"
+        }
+      ],
+      "containers": {
+        "vxlan-processor": {
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "external-traffic", 
+              "ip": {"address": "172.20.100.10", "mask": 24}
+            }
+          ],
+          "vxlan_tunnel": {
+            "src": "172.20.100.10",
+            "dst": "172.20.100.1", 
+            "vni": 100,
+            "decap_next": "l2"
+          }
+        }
+      },
+      "traffic_config": {
+        "vxlan_port": 4789,
+        "vxlan_vni": 100,
+        "inner_src_ip": "10.10.10.5",
+        "inner_dst_ip": "10.10.10.10"
+      }
+    }
+  }
+}
 ```
 
-### Architecture Benefits
+### Dynamic Configuration Loading
 
-**Consolidated 3-Container Design:**
-- 50% reduction in resource usage (from 6 to 3 containers)
-- Simplified network topology and debugging  
-- Logical separation: Network Processing | Security Processing | Destination
-- Maintained functionality with improved efficiency
-- Reduced inter-container communication overhead
+The system automatically:
+- Extracts container IPs from interface configurations
+- Uses network gateways for traffic generation source IPs  
+- Configures VXLAN tunnels from container specifications
+- Sets up NAT44 mappings from security processor config
+- Configures TAP interfaces from destination container settings
 
 ## Project Structure
 
 ```
 vpp_chain/
-├── README.md                       # This comprehensive guide
-├── config.json                    # Centralized network and container configuration
+├── README.md                       # This comprehensive documentation
+├── config.json                    # **Master configuration** (all topology data)
 ├── CLAUDE.md                      # Claude Code guidance documentation
-├── quick-start.sh                 # Quick setup and test script
+├── validation.sh                  # Comprehensive validation script
+├── quick-start.sh                 # Quick setup script
 ├── src/
-│   ├── main.py                    # Main CLI entry point
-│   ├── utils/                     # Python utility modules
-│   │   ├── __init__.py
-│   │   ├── logger.py             # Logging and output formatting
-│   │   ├── container_manager.py  # Docker container management
+│   ├── main.py                    # **Primary CLI interface**
+│   ├── utils/                     # Core Python modules
+│   │   ├── config_manager.py     # **Config-driven management**
+│   │   ├── container_manager.py  # Docker container lifecycle
 │   │   ├── network_manager.py    # Network setup and testing
-│   │   ├── config_manager.py     # Configuration management
-│   │   └── traffic_generator.py  # Traffic generation and testing
-│   └── containers/               # Container configurations
-│       ├── vxlan-config.sh       # VXLAN processor configuration
-│       ├── security-config.sh    # Security processor configuration  
-│       ├── destination-config.sh # Destination configuration
-│       ├── Dockerfile.vxlan      # VXLAN processor container
-│       ├── Dockerfile.security   # Security processor container
-│       └── Dockerfile.destination # Destination container
-└── docs/                         # Additional documentation
-    └── manual_test_guide.md      # Detailed testing procedures
+│   │   ├── traffic_generator.py  # **Config-driven traffic generation**
+│   │   └── logger.py             # Logging and output formatting
+│   ├── containers/               # VPP container configurations
+│   │   ├── vxlan-config.sh       # VXLAN decapsulation config
+│   │   ├── security-config.sh    # Consolidated security processing
+│   │   ├── destination-config.sh # TAP interface and capture
+│   │   ├── Dockerfile.vxlan      # VXLAN processor container
+│   │   ├── Dockerfile.security   # Security processor container
+│   │   └── Dockerfile.destination # Destination container
+│   └── configs/
+│       ├── startup.conf          # VPP startup configuration (no-pci)
+│       └── start-vpp.sh          # VPP initialization script
+├── tests/                        # Python unit tests
+│   ├── test_integration.py       # End-to-end integration tests
+│   └── test_container_manager.py # Container management tests
+├── scripts/
+│   └── testing/
+│       ├── quick_traffic_check.sh # Quick traffic verification
+│       └── verify_traffic_flow.py # Comprehensive traffic analysis
+└── docs/
+    ├── architecture.md           # Detailed architecture documentation
+    ├── testing_guide.md          # Testing procedures and guidelines
+    ├── troubleshooting.md        # Common issues and solutions
+    └── manual_test_guide.md      # Manual testing procedures
 ```
 
 ## Troubleshooting
 
 ### Common Issues and Solutions
 
-#### High CPU Usage on TAP Interface (destination)
-The TAP interface in the destination container may consume high CPU due to polling mode:
+#### VM Management Connectivity Loss
+
+**Problem**: VM loses management connectivity when running VPP chain
+**Root Cause**: Docker networks using conflicting IP ranges (192.168.x.x)
+**✅ Solution**: Project now uses isolated 172.20.x.x ranges that don't conflict with VM management
 
 ```bash
-# Check TAP interface CPU usage
-docker exec destination top -p $(pgrep vpp)
+# Verify no conflicts
+ip route show | grep -E "(default|10\.168\.)"
+# Should show your management network (e.g., 10.168.0.x) is unaffected
 
-# Solution: Optimize TAP interface settings
-docker exec destination vppctl set interface rx-mode tap0 interrupt
+# Confirm Docker networks are isolated
+docker network ls
+docker network inspect external-traffic | jq '.[0].IPAM.Config'
 ```
 
-#### VPP Packet Drops and Test Failures
-VPP's high-performance architecture can cause "Low success rate" errors:
+#### VPP Interface Stealing
 
-**Why this happens:**
-- VPP bypasses the Linux kernel network stack for performance
-- Direct hardware access can cause standard tools to miss packets
-- VPP uses its own packet buffers, separate from kernel buffers
+**Problem**: VPP takes over host network interfaces
+**Root Cause**: Missing `no-pci` configuration
+**✅ Solution**: Project includes `dpdk { no-pci }` in all VPP startup configs
 
-**Diagnostic commands:**
 ```bash
-# Check detailed drop reasons
-docker exec vxlan-processor vppctl show errors
+# Verify no-pci configuration
+docker exec vxlan-processor cat /vpp-common/startup.conf | grep -A3 "dpdk"
+# Should show: "no-pci"
 
-# Check interface statistics
+# Check host interfaces remain intact
+ip addr show ens160  # or your management interface
+```
+
+#### Packet Processing Verification
+
+**Problem**: "Low success rate" in traffic tests
+**Explanation**: VPP processes packets at high speed, bypassing Linux network stack
+
+**✅ Verification Methods**:
+
+```bash
+# 1. Check interface statistics (most reliable)
+docker exec vxlan-processor vppctl show interface
+# Look for: rx packets, tx packets on vxlan_tunnel0
+
+# 2. Check end-to-end packet flow
 for container in vxlan-processor security-processor destination; do
-  echo "=== $container Interface Stats ==="
-  docker exec $container vppctl show interface | grep -E "(rx packets|tx packets|drops)"
+  echo "=== $container ==="
+  docker exec $container vppctl show interface | grep -E "(rx packets|tx packets)"
 done
 
-# Check VPP traces
-docker exec vxlan-processor vppctl show trace
+# 3. Verify specific processing stages
+docker exec vxlan-processor vppctl show vxlan tunnel          # VXLAN decap
+docker exec security-processor vppctl show nat44 sessions     # NAT44 
+docker exec security-processor vppctl show ipsec sa           # IPsec
+docker exec destination vppctl show interface tap0            # Final delivery
 ```
 
-**Solutions:**
-1. Use UDP connectivity tests instead of ICMP ping (VPP drops ping by design)
-2. Increase buffer sizes and optimize network settings
-3. Use the enhanced traffic generator with retry logic
+#### Configuration Issues
 
-#### Container Health Issues
+**Problem**: Containers fail to start or VPP misconfiguration
+**Solution**: Use force rebuild after config changes
+
 ```bash
-# Verify all containers are running and VPP is responsive
+# Always rebuild after config.json changes
+sudo python3 src/main.py cleanup
+sudo python3 src/main.py setup --force
+
+# Verify configuration loading
+python3 -c "
+from src.utils.config_manager import ConfigManager
+config = ConfigManager()
+print('Networks:', [n['name'] for n in config.get_networks()])
+print('Containers:', list(config.get_containers().keys()))
+"
+```
+
+### Performance Tuning
+
+#### System Optimization
+
+```bash
+# Increase network buffer sizes
+echo 'net.core.rmem_default = 262144' | sudo tee -a /etc/sysctl.conf
+echo 'net.core.rmem_max = 16777216' | sudo tee -a /etc/sysctl.conf  
+echo 'net.core.wmem_default = 262144' | sudo tee -a /etc/sysctl.conf
+echo 'net.core.wmem_max = 16777216' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+#### VPP Performance Tuning
+
+```bash
+# Set interfaces to interrupt mode (lower CPU usage)
 for container in vxlan-processor security-processor destination; do
-  echo "Checking $container..."
-  docker exec $container vppctl show version >/dev/null 2>&1 && echo "OK" || echo "FAILED"
+  docker exec $container vppctl set interface rx-mode host-eth0 interrupt
+  docker exec $container vppctl set interface rx-mode host-eth1 interrupt 2>/dev/null || true
 done
-```
 
-#### Network Connectivity Problems
-```bash
-# Test UDP connectivity between container pairs (recommended over ping)
-echo "test" | docker exec -i vxlan-processor nc -u -w 1 172.20.1.20 2000
-
-# Check VPP routing tables
-docker exec vxlan-processor vppctl show ip fib | grep -E "172.20"
-
-# Verify ARP resolution
-docker exec vxlan-processor vppctl show ip neighbors
-```
-
-### Advanced Testing Procedures
-
-For comprehensive testing, refer to the `docs/manual_test_guide.md` which includes:
-
-- Infrastructure validation (container status, VPP health, interface status)
-- Layer 3 connectivity testing with expected results
-- UDP traffic flow testing (recommended method for VPP)
-- VPP routing table analysis
-- Specialized function validation (VXLAN, NAT44, IPsec, fragmentation)
-- Packet tracing and traffic analysis
-- Troubleshooting commands with interpretation guidance
-
-#### Key Testing Commands
-
-```bash
-# 1. Basic health check
-sudo python3 src/main.py status
-
-# 2. Connectivity test
-sudo python3 src/main.py test --type connectivity
-
-# 3. Traffic test with enhanced handling
-sudo python3 src/main.py test --type traffic
-
-# 4. Debug specific container
-sudo python3 src/main.py debug vxlan-processor "show vxlan tunnel"
-
-# 5. Manual UDP connectivity test (most reliable for VPP)
-timeout 2 docker exec vxlan-processor nc -l -u -p 2000 &
-echo "test" | timeout 2 docker exec -i vxlan-processor nc -u -w 1 172.20.1.20 2000
-```
-
-### Performance Optimization
-
-#### System-level Optimizations
-```bash
-# Increase buffer sizes for better VPP performance
-echo 'net.core.rmem_default = 262144' >> /etc/sysctl.conf
-echo 'net.core.rmem_max = 16777216' >> /etc/sysctl.conf  
-echo 'net.core.wmem_default = 262144' >> /etc/sysctl.conf
-echo 'net.core.wmem_max = 16777216' >> /etc/sysctl.conf
-sysctl -p
-```
-
-#### VPP Configuration Optimizations
-```bash
-# Enable promiscuous mode for better packet reception
-docker exec vxlan-processor vppctl set interface promiscuous on host-eth0
-
-# Optimize buffer allocation
-docker exec vxlan-processor vppctl set interface rx-mode host-eth0 polling
-
-# Set larger MTU for jumbo frame support
+# Enable larger MTU for jumbo frames (if needed)
 docker exec vxlan-processor vppctl set interface mtu packet 9000 host-eth0
 ```
 
-## Detailed Network Architecture
+## Advanced Usage
 
-### Physical and Logical Interface Mappings
+### Custom Network Topologies
 
-Each container runs VPP with AF_PACKET interfaces mapped to Docker bridge networks:
+Modify `config.json` to create custom topologies:
 
+```json
+{
+  "modes": {
+    "custom": {
+      "networks": [
+        {
+          "name": "custom-network",
+          "subnet": "10.100.0.0/24",
+          "gateway": "10.100.0.1"
+        }
+      ],
+      "containers": {
+        "vxlan-processor": {
+          "interfaces": [
+            {
+              "network": "custom-network",
+              "ip": {"address": "10.100.0.10", "mask": 24}
+            }
+          ]
+        }
+      }
+    }
+  }
+}
 ```
-Container Network Architecture:
-┌─────────────────────────────────────────────────────────────┐
-│                    HOST LINUX SYSTEM                        │
-│  Docker Bridge Networks:                                    │
-│  ├── external-traffic      (172.20.0.0/24, GW: 172.20.0.1) │
-│  ├── vxlan-processing      (172.20.1.0/24, GW: 172.20.1.1) │
-│  └── processing-destination (172.20.2.0/24, GW: 172.20.2.1) │
-└─────────────────────────────────────────────────────────────┘
+
+### Traffic Generation Customization
+
+Modify traffic parameters in `config.json`:
+
+```json
+{
+  "traffic_config": {
+    "vxlan_vni": 200,           # Custom VNI
+    "packet_count": 100,        # More packets
+    "packet_size": 1500,        # Different size
+    "inner_src_ip": "192.168.1.10",  # Custom inner IPs
+    "inner_dst_ip": "192.168.1.20"
+  }
+}
 ```
 
-### Complete Packet Transformation Flow
+### Integration Testing
 
-1. **Traffic Generation → VXLAN-PROCESSOR**: VXLAN(VNI=100)/IP(10.10.10.5→10.10.10.10)/UDP(2055)
-2. **VXLAN-PROCESSOR → SECURITY-PROCESSOR**: Decapsulated inner packet IP(10.10.10.5→10.10.10.10)/UDP(2055)
-3. **SECURITY-PROCESSOR (NAT44)**: NAT-translated IP(10.10.10.5→172.20.2.10)/UDP(2055)
-4. **SECURITY-PROCESSOR (IPsec)**: Encrypted IP(172.20.1.20→172.20.2.20)/ESP(encrypted_payload)
-5. **SECURITY-PROCESSOR (Fragmentation)**: Fragmented encrypted packets (≤1400 bytes each)
-6. **DESTINATION**: Reassembled packets via 10.0.3.1/24 TAP bridge to Linux stack
+```bash
+# Run comprehensive validation
+sudo ./validation.sh
+
+# Custom test scenarios
+sudo python3 -c "
+from src.utils.traffic_generator import TrafficGenerator
+from src.utils.config_manager import ConfigManager
+
+config = ConfigManager()
+traffic = TrafficGenerator(config)
+# Custom testing logic here
+"
+```
+
+## Architecture Benefits
+
+### Consolidated Design Advantages
+
+- **50% Resource Reduction**: 3 containers vs traditional 6-container setups
+- **Simplified Networking**: Fewer inter-container hops and networks
+- **Easier Debugging**: Logical separation of concerns
+- **Better Performance**: Reduced network overhead between processing stages
+- **Configuration Flexibility**: Single config.json controls entire topology
+
+### Security Features
+
+- **Network Isolation**: Each processing stage in separate Docker networks
+- **No Host Interface Interference**: VPP `no-pci` prevents interface stealing
+- **IPsec Encryption**: AES-GCM-128 ESP encryption between security and destination
+- **NAT44 Translation**: Address translation for network segmentation
+- **Packet Fragmentation**: Handles large packets with MTU enforcement
 
 ## Use Cases
 
-### Cloud Networking Scenarios
+### Production Scenarios
 
-1. **Multi-Cloud Connectivity**: Secure tunneling between AWS and GCP
-2. **Network Function Virtualization (NFV)**: Modular network service chaining
-3. **Microservices Networking**: Service mesh data plane optimization
-4. **Edge Computing**: High-performance packet processing at network edge
-5. **Security Gateway**: Combined NAT + IPsec processing for enterprise traffic
+1. **Multi-Cloud Connectivity**
+   - VXLAN tunneling between different cloud providers
+   - Secure NAT and IPsec processing for inter-cloud traffic
+
+2. **Network Function Virtualization (NFV)**
+   - Chained network services in containerized environments
+   - High-performance packet processing for telecom applications
+
+3. **Microservices Security**
+   - Service mesh data plane with encryption and NAT
+   - Container-to-container secure communication
+
+4. **Edge Computing**
+   - Network processing at edge locations
+   - Low-latency packet transformation and forwarding
+
+5. **Enterprise Gateway**
+   - Combined VXLAN, NAT, and IPsec processing
+   - Secure connectivity for hybrid cloud environments
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make changes and test thoroughly
-4. Commit with clear messages: `git commit -m "feat: add new feature"`
-5. Push and create a pull request
+1. **Fork** the repository
+2. **Create** feature branch: `git checkout -b feature/amazing-feature`
+3. **Make** changes and ensure all tests pass: `sudo python3 src/main.py test`
+4. **Update** documentation if needed
+5. **Commit** changes: `git commit -m "feat: add amazing feature"`
+6. **Push** and create pull request
+
+### Development Guidelines
+
+- All network topology must be config-driven
+- No hardcoded IP addresses or interface names
+- Comprehensive testing required for new features
+- Documentation updates for user-facing changes
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ---
 
-**Built for high-performance networking and cloud-native architectures**
+**Built for Cloud-Native, High-Performance Network Processing**
+
+*Demonstrating production-ready VPP containerization with complete configuration flexibility and comprehensive testing capabilities.*

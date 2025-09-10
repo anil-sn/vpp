@@ -30,11 +30,19 @@ class TrafficGenerator:
         # Dynamically set container IPs based on current mode's container config
         containers = self.config_manager.get_containers()
         
+        # Get network configuration
+        networks = self.config_manager.get_networks()
+        
         # Get VXLAN processor container IP from external-traffic network
         vxlan_container = containers["vxlan-processor"]
         for interface in vxlan_container["interfaces"]:
             if interface["network"] == "external-traffic":
                 self.CONFIG["vxlan_ip"] = interface["ip"]["address"]
+                # Also get the network gateway as source IP for traffic generation
+                for network in networks:
+                    if network["name"] == "external-traffic":
+                        self.CONFIG["vxlan_src_ip"] = network["gateway"]
+                        break
                 break
         
         # Get destination container IP from processing-destination network
@@ -43,6 +51,12 @@ class TrafficGenerator:
             if interface["network"] == "processing-destination":
                 self.CONFIG["destination_ip"] = interface["ip"]["address"]
                 break
+        
+        # Get TAP interface subnet from destination config for packet capture filtering
+        if "tap_interface" in destination_container:
+            tap_ip = destination_container["tap_interface"]["ip"]
+            # Extract subnet prefix (e.g., "10.0.3" from "10.0.3.1/24")
+            self.CONFIG["destination_tap_subnet"] = ".".join(tap_ip.split("/")[0].split(".")[:-1])
         
     def check_environment(self):
         """Verify that the environment is ready for traffic testing"""
@@ -71,9 +85,9 @@ class TrafficGenerator:
         try:
             log_info("Finding suitable network interface...")
             
-            # Try to find the interface that can reach the ingress
+            # Try to find the interface that can reach the vxlan processor
             result = subprocess.run([
-                "ip", "route", "get", self.CONFIG["ingress_ip"]
+                "ip", "route", "get", self.CONFIG["vxlan_ip"]
             ], capture_output=True, text=True, check=True)
             
             for line in result.stdout.split('\n'):
@@ -124,9 +138,9 @@ class TrafficGenerator:
                 payload
             )
             
-            # VXLAN encapsulation
+            # VXLAN encapsulation - source IP from config, destination is VXLAN processor
             vxlan_packet = (
-                IP(src=self.CONFIG["bridge_ip"], dst=self.CONFIG["ingress_ip"]) /
+                IP(src=self.CONFIG["vxlan_src_ip"], dst=self.CONFIG["vxlan_ip"]) /
                 UDP(sport=12345 + seq_num, dport=self.CONFIG["vxlan_port"]) /
                 VXLAN(vni=self.CONFIG["vxlan_vni"], flags=0x08) /
                 inner_packet
@@ -157,9 +171,9 @@ class TrafficGenerator:
         try:
             def packet_handler(packet):
                 if self.capturing and packet.haslayer(IP):
-                    # Heuristic check: Assumes test traffic is destined for GCP IP or from NAT's internal range.
+                    # Heuristic check: Assumes test traffic is destined for destination IP or from TAP interface range.
                     # For more robust testing, consider embedding a unique identifier in the payload.
-                    if packet[IP].dst == self.CONFIG["gcp_ip"] or packet[IP].src.startswith("10.0.3"):
+                    if packet[IP].dst == self.CONFIG["destination_ip"] or packet[IP].src.startswith(self.CONFIG["destination_tap_subnet"]):
                         self.received_packets += 1
                         log_info(f"Captured packet {self.received_packets}")
             

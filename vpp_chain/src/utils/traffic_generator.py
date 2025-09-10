@@ -481,19 +481,30 @@ class TrafficGenerator:
                 tap_tx = 0
                 if result.returncode == 0:
                     lines = result.stdout.split('\n')
+                    rx_section = False
+                    tx_section = False
+                    
                     for line in lines:
+                        # Track which section we're in
                         if 'RX QUEUE' in line and 'Total Packets' in line:
-                            parts = line.split(':')
-                            if len(parts) >= 2:
-                                try:
-                                    tap_rx = int(parts[-1].strip())
-                                except:
-                                    pass
+                            rx_section = True
+                            tx_section = False
+                            continue
                         elif 'TX QUEUE' in line and 'Total Packets' in line:
+                            rx_section = False
+                            tx_section = True
+                            continue
+                        
+                        # Look for the specific pattern: "         0 : 13"
+                        if line.strip() and ':' in line and line.strip()[0].isdigit():
                             parts = line.split(':')
                             if len(parts) >= 2:
                                 try:
-                                    tap_tx = int(parts[-1].strip())
+                                    packet_count = int(parts[-1].strip())
+                                    if rx_section and tap_rx == 0:
+                                        tap_rx = packet_count
+                                    elif tx_section and tap_tx == 0:
+                                        tap_tx = packet_count
                                 except:
                                     pass
                 

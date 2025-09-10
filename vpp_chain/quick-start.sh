@@ -7,6 +7,9 @@ echo "Starting VPP Multi-Container Chain setup and test (3-container architectur
 echo "Architecture: VXLAN-PROCESSOR -> SECURITY-PROCESSOR -> DESTINATION"
 echo ""
 
+echo "Step 0: clean up containers..."
+sudo python3 src/main.py cleanup
+
 echo "Step 1: Setting up containers..."
 sudo python3 src/main.py setup
 

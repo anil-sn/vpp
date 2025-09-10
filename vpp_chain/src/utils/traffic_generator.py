@@ -140,6 +140,7 @@ class TrafficGenerator:
             
             # VXLAN encapsulation - source IP from config, destination is VXLAN processor
             vxlan_packet = (
+                Ether() /
                 IP(src=self.CONFIG["vxlan_src_ip"], dst=self.CONFIG["vxlan_ip"]) /
                 UDP(sport=12345 + seq_num, dport=self.CONFIG["vxlan_port"]) /
                 VXLAN(vni=self.CONFIG["vxlan_vni"], flags=0x08) /
@@ -196,6 +197,18 @@ class TrafficGenerator:
             log_info(f"Packet size: {self.CONFIG['packet_size']} bytes (triggers fragmentation)")
             log_info(f"VXLAN VNI: {self.CONFIG['vxlan_vni']}")
             
+            # Resolve destination MAC address
+            try:
+                dst_mac = getmacbyip(self.CONFIG["vxlan_ip"])
+                if not dst_mac:
+                    raise ValueError("MAC address resolution failed")
+                log_info(f"Resolved destination MAC: {dst_mac}")
+            except Exception as e:
+                log_error(f"Could not resolve MAC for {self.CONFIG['vxlan_ip']}: {e}")
+                # Fallback to broadcast MAC if resolution fails
+                dst_mac = "ff:ff:ff:ff:ff:ff"
+                log_warning(f"Falling back to broadcast MAC: {dst_mac}")
+
             self.sent_packets = 0
             
             for i in range(self.CONFIG["packet_count"]):
@@ -203,8 +216,11 @@ class TrafficGenerator:
                 if packet is None:
                     continue
                 
+                # Explicitly set the destination MAC address
+                packet[Ether].dst = dst_mac
+                
                 try:
-                    send(packet, iface=self.interface, verbose=0)
+                    sendp(packet, iface=self.interface, verbose=0)
                     self.sent_packets += 1
                     log_info(f"Sent packet {i+1}/{self.CONFIG['packet_count']}")
                     time.sleep(0.2)  # Small delay between packets

@@ -7,13 +7,15 @@
           "name": "external-traffic",
           "subnet": "172.20.100.0/24",
           "gateway": "172.20.100.1",
-          "description": "External VXLAN traffic ingress (isolated from host)"
+          "description": "External VXLAN traffic ingress (isolated from host)",
+          "mtu": 9000
         },
         {
           "name": "vxlan-processing",
           "subnet": "172.20.101.0/24",
           "gateway": "172.20.101.1",
-          "description": "VXLAN to Security Processor communication (isolated)"
+          "description": "VXLAN to Security Processor communication (isolated)",
+          "mtu": 9000
         },
         {
           "name": "processing-destination",

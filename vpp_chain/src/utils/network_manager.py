@@ -7,6 +7,7 @@ Handles Docker networks, connectivity testing, and network verification.
 import subprocess
 import socket
 import time
+import json
 from .logger import get_logger, log_success, log_error, log_warning, log_info
 from .config_manager import ConfigManager
 
@@ -78,7 +79,31 @@ class NetworkManager:
                 ], capture_output=True, text=True, check=True)
                 
                 log_success(f"Network {network['name']} created")
-            
+
+                # Check if a custom MTU needs to be set on the host bridge
+                if 'mtu' in network:
+                    mtu_value = network['mtu']
+                    log_info(f"Setting MTU for {network['name']} host bridge to {mtu_value}...")
+                    try:
+                        # Get the full network ID to derive the bridge name
+                        inspect_result = subprocess.run(
+                            ["docker", "network", "inspect", network["name"]],
+                            capture_output=True, text=True, check=True
+                        )
+                        network_id = json.loads(inspect_result.stdout)[0]['Id']
+                        bridge_name = "br-" + network_id[:12]
+
+                        # Set the MTU on the host bridge interface
+                        subprocess.run(
+                            ["ip", "link", "set", "dev", bridge_name, "mtu", str(mtu_value)],
+                            capture_output=True, text=True, check=True
+                        )
+                        log_success(f"Successfully set MTU for {bridge_name} to {mtu_value}")
+                    except (subprocess.CalledProcessError, FileNotFoundError, KeyError, IndexError) as e:
+                        log_error(f"Failed to set MTU for {network['name']}: {e}")
+                        # This is a critical failure for the traffic test
+                        return False
+
             log_success("All networks created successfully")
             return True
             

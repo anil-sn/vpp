@@ -1,32 +1,34 @@
 {
-  "default_mode": "gcp",
+  "default_mode": "testing",
+  "description": "Baseline configuration for development and testing of VPP multi-container chain",
   "modes": {
-    "gcp": {
+    "testing": {
+      "description": "Development and testing environment with simplified network topology",
       "networks": [
         {
           "name": "external-traffic",
           "subnet": "172.20.100.0/24",
           "gateway": "172.20.100.1",
-          "description": "External VXLAN traffic ingress (isolated from host)",
+          "description": "External VXLAN traffic ingress (isolated from VM management)",
           "mtu": 9000
         },
         {
           "name": "vxlan-processing",
           "subnet": "172.20.101.0/24",
           "gateway": "172.20.101.1",
-          "description": "VXLAN to Security Processor communication (isolated)",
+          "description": "VXLAN to Security Processor communication",
           "mtu": 9000
         },
         {
           "name": "processing-destination",
           "subnet": "172.20.102.0/24",
           "gateway": "172.20.102.1",
-          "description": "Security Processor to Destination communication (isolated)"
+          "description": "Security Processor to Destination communication"
         }
       ],
       "containers": {
         "vxlan-processor": {
-          "description": "VXLAN decapsulation and forwarding",
+          "description": "VXLAN decapsulation and L2 bridging (testing)",
           "dockerfile": "src/containers/Dockerfile.vxlan",
           "config_script": "src/containers/vxlan-config.sh",
           "interfaces": [
@@ -67,7 +69,7 @@
           ]
         },
         "security-processor": {
-          "description": "Consolidated NAT44 + IPsec + IP Fragmentation processing",
+          "description": "Consolidated NAT44 + IPsec + IP Fragmentation processing (testing)",
           "dockerfile": "src/containers/Dockerfile.security",
           "config_script": "src/containers/security-config.sh",
           "interfaces": [
@@ -141,7 +143,7 @@
           ]
         },
         "destination": {
-          "description": "Destination endpoint with TAP interface and packet capture",
+          "description": "Destination endpoint with TAP interface and packet capture (testing)",
           "dockerfile": "src/containers/Dockerfile.destination",
           "config_script": "src/containers/destination-config.sh",
           "interfaces": [
@@ -198,7 +200,7 @@
           "description": "VXLAN → Security Processor"
         },
         {
-          "from": "security-processor", 
+          "from": "security-processor",
           "to": "172.20.102.20",
           "description": "Security Processor → Destination"
         }
@@ -218,6 +220,23 @@
           "IPsec encryption (security-processor)",
           "IP fragmentation (security-processor)"
         ]
+      },
+      "testing_features": {
+        "df_bit_testing": {
+          "enabled": true,
+          "test_packet_sizes": [1400, 1450, 1500],
+          "df_bit_variations": [true, false]
+        },
+        "performance_testing": {
+          "enabled": false,
+          "max_pps": 1000,
+          "duration": 30
+        },
+        "debug_features": {
+          "packet_tracing": true,
+          "interface_stats": true,
+          "detailed_logging": true
+        }
       }
     }
   }

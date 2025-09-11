@@ -1,0 +1,192 @@
+{
+  "default_mode": "production",
+  "modes": {
+    "production": {
+      "networks": [
+        {
+          "name": "external-ingress",
+          "subnet": "10.100.0.0/24",
+          "gateway": "10.100.0.1",
+          "description": "Production traffic ingress (port mirroring)",
+          "mtu": 9000
+        },
+        {
+          "name": "vxlan-processing", 
+          "subnet": "10.101.0.0/24",
+          "gateway": "10.101.0.1",
+          "description": "VXLAN processing network",
+          "mtu": 9000
+        },
+        {
+          "name": "security-processing",
+          "subnet": "10.102.0.0/24", 
+          "gateway": "10.102.0.1",
+          "description": "Security processing network"
+        },
+        {
+          "name": "analytics-output",
+          "subnet": "10.103.0.0/24",
+          "gateway": "10.103.0.1", 
+          "description": "Analytics and monitoring output"
+        }
+      ],
+      "containers": {
+        "traffic-ingress": {
+          "description": "Production traffic ingress and VXLAN decapsulation",
+          "dockerfile": "src/containers/Dockerfile.vxlan",
+          "config_script": "src/containers/production-ingress-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "external-ingress",
+              "ip": {
+                "address": "10.100.0.10",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1", 
+              "network": "vxlan-processing",
+              "ip": {
+                "address": "10.101.0.10",
+                "mask": 24
+              }
+            }
+          ],
+          "vxlan_tunnel": {
+            "src": "10.100.0.10",
+            "dst": "10.100.0.1",
+            "vni": 100,
+            "decap_next": "l2"
+          },
+          "additional_listeners": [
+            {
+              "port": 8081,
+              "protocol": "udp",
+              "description": "Direct UDP traffic capture"
+            },
+            {
+              "port": 31765,
+              "protocol": "udp", 
+              "description": "VXLAN traffic capture"
+            }
+          ]
+        },
+        "security-processor": {
+          "description": "Production security processing with NAT44 + IPsec",
+          "dockerfile": "src/containers/Dockerfile.security",
+          "config_script": "src/containers/production-security-config.sh", 
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "vxlan-processing",
+              "ip": {
+                "address": "10.101.0.20",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1",
+              "network": "security-processing", 
+              "ip": {
+                "address": "10.102.0.10",
+                "mask": 24
+              },
+              "mtu": 1400
+            }
+          ],
+          "nat44": {
+            "sessions": 10000,
+            "static_mapping": {
+              "local_ip": "100.104.12.3",
+              "local_port": 8081,
+              "external_ip": "10.102.0.10", 
+              "external_port": 8081
+            },
+            "inside_interface": "eth0",
+            "outside_interface": "eth1"
+          },
+          "ipsec": {
+            "sa_in": {
+              "id": 2000,
+              "spi": 2000,
+              "crypto_alg": "aes-gcm-256",
+              "crypto_key": "4a506a794f574265564551694d6537684a506a794f574265564551694d653768"
+            },
+            "sa_out": {
+              "id": 1000, 
+              "spi": 1000,
+              "crypto_alg": "aes-gcm-256",
+              "crypto_key": "4a506a794f574265564551694d6537684a506a794f574265564551694d653768"
+            },
+            "tunnel": {
+              "src": "10.101.0.20",
+              "dst": "10.102.0.20", 
+              "local_ip": "10.200.100.1/30",
+              "remote_ip": "10.200.100.2/30"
+            }
+          }
+        },
+        "analytics-destination": {
+          "description": "Production analytics destination with monitoring", 
+          "dockerfile": "src/containers/Dockerfile.destination",
+          "config_script": "src/containers/production-destination-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "security-processing",
+              "ip": {
+                "address": "10.102.0.20",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1",
+              "network": "analytics-output",
+              "ip": {
+                "address": "10.103.0.10", 
+                "mask": 24
+              }
+            }
+          ],
+          "tap_interface": {
+            "id": 0,
+            "name": "analytics-tap0",
+            "ip": "10.200.0.1/24",
+            "linux_ip": "10.200.0.2/24",
+            "pcap_file": "/var/log/vpp/production-traffic.pcap", 
+            "rx_mode": "interrupt"
+          },
+          "monitoring": {
+            "prometheus_port": 9090,
+            "grafana_port": 3000,
+            "log_level": "info"
+          }
+        }
+      },
+      "traffic_config": {
+        "vxlan_port": 31765,
+        "vxlan_vni": 100,
+        "direct_udp_port": 8081,
+        "packet_count": 1000,
+        "packet_size": 1400,
+        "test_duration": 60,
+        "production_mode": true,
+        "mirror_sources": [
+          "ens6:8081",
+          "ens6:31765" 
+        ]
+      },
+      "production_settings": {
+        "high_performance": true,
+        "numa_optimization": true,
+        "cpu_isolation": ["2-7"],
+        "huge_pages": "4GB", 
+        "buffer_size": 32768,
+        "worker_threads": 4,
+        "rx_queues": 4,
+        "tx_queues": 4
+      }
+    }
+  }
+}

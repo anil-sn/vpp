@@ -1,0 +1,391 @@
+{
+  "default_mode": "aws_gcp_production",
+  "description": "Production configuration for AWS Traffic Mirroring → GCP FDI pipeline",
+  "modes": {
+    "aws_gcp_production": {
+      "description": "Production AWS FCR → Mirror Target EC2 → VPN → GCP FDI pipeline",
+      "environment": {
+        "type": "production",
+        "aws_region": "us-east-1",
+        "gcp_region": "us-central1",
+        "vpn_connection": "aws-gcp-vpn-tunnel",
+        "monitoring_required": true,
+        "sla_requirements": {
+          "availability": "99.9%",
+          "max_latency_ms": 50,
+          "max_packet_loss": "0.1%"
+        }
+      },
+      "networks": [
+        {
+          "name": "aws-mirror-ingress",
+          "subnet": "10.0.0.0/24",
+          "gateway": "10.0.0.1",
+          "description": "AWS Traffic Mirroring VXLAN ingress from Mirror Target NLB",
+          "mtu": 9000,
+          "aws_integration": {
+            "vpc_id": "${AWS_VPC_ID}",
+            "subnet_type": "private",
+            "route_table": "aws-mirror-rt"
+          }
+        },
+        {
+          "name": "aws-processing-internal",
+          "subnet": "10.1.0.0/24",
+          "gateway": "10.1.0.1",
+          "description": "Internal processing network within AWS Target EC2",
+          "mtu": 9000
+        },
+        {
+          "name": "vpn-transit",
+          "subnet": "10.2.0.0/24",
+          "gateway": "10.2.0.1", 
+          "description": "AWS-GCP VPN transit network",
+          "vpn_integration": {
+            "tunnel_name": "aws-gcp-vpn-1",
+            "bgp_asn": 65000,
+            "encryption": "aes256-gcm"
+          }
+        },
+        {
+          "name": "gcp-fdi-ingress",
+          "subnet": "10.3.0.0/24",
+          "gateway": "10.3.0.1",
+          "description": "GCP FDI Ingress NLB network",
+          "gcp_integration": {
+            "project_id": "${GCP_PROJECT_ID}",
+            "network_name": "fdi-vpc",
+            "subnet_region": "us-central1"
+          }
+        }
+      ],
+      "containers": {
+        "aws-mirror-target-processor": {
+          "description": "AWS Mirror Target EC2 processor (production-grade)",
+          "dockerfile": "src/containers/Dockerfile.aws-target-ec2",
+          "config_script": "src/containers/aws-target-ec2-config.sh",
+          "deployment": {
+            "aws_instance_type": "c5n.4xlarge",
+            "availability_zone": "us-east-1a",
+            "security_groups": ["sg-vpp-mirror-target"],
+            "iam_role": "VPP-Mirror-Target-Role",
+            "enhanced_networking": true,
+            "sr_iov": true
+          },
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "aws-mirror-ingress",
+              "ip": {
+                "address": "10.0.0.10",
+                "mask": 24
+              },
+              "description": "Primary ENI - AWS Traffic Mirror VXLAN ingress",
+              "aws_eni": {
+                "type": "primary",
+                "mac_address": "aa:bb:cc:00:00:02",
+                "security_groups": ["sg-mirror-ingress"],
+                "source_dest_check": false
+              }
+            },
+            {
+              "name": "eth1", 
+              "network": "aws-processing-internal",
+              "ip": {
+                "address": "10.0.0.20",
+                "mask": 24
+              },
+              "description": "Secondary ENI - Internal processing (br0 bridge)",
+              "aws_eni": {
+                "type": "secondary",
+                "mac_address": "de:ad:be:ef:56:78",
+                "security_groups": ["sg-internal-processing"],
+                "source_dest_check": false
+              }
+            }
+          ],
+          "vxlan_processing": {
+            "port": 4789,
+            "vni": "auto_detect",
+            "decap_next": "l3_dnat_bridge",
+            "performance": {
+              "buffer_size": 65536,
+              "rx_queues": 8,
+              "tx_queues": 8,
+              "worker_threads": 8
+            }
+          },
+          "bridge_setup": {
+            "name": "br0",
+            "mac": "de:ad:be:ef:56:78",
+            "ip": "10.0.0.20/24",
+            "stp": false,
+            "forward_delay": 0
+          },
+          "dnat_configuration": {
+            "enabled": true,
+            "mappings": [
+              {
+                "original_port": 31756,
+                "target_port": 8081,
+                "protocol": "udp",
+                "description": "NetFlow/sFlow/IPFIX port mapping"
+              }
+            ],
+            "preserve_source_ip": true,
+            "session_timeout": 300
+          },
+          "df_bit_handling": {
+            "enabled": true,
+            "clear_df_for_oversized_udp": true,
+            "mtu_settings": {
+              "vxlan_tunnel": 1450,
+              "processing_interfaces": 1400
+            },
+            "fragmentation": {
+              "enable_ipv4": true,
+              "max_reassemblies": 4096,
+              "reassembly_timeout": 10000
+            }
+          }
+        },
+        "vpn-gateway-processor": {
+          "description": "AWS-GCP VPN gateway traffic processor",
+          "dockerfile": "src/containers/Dockerfile.vpn-gateway",
+          "config_script": "src/containers/vpn-gateway-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "aws-processing-internal",
+              "ip": {
+                "address": "10.1.0.10",
+                "mask": 24
+              },
+              "description": "From AWS processing"
+            },
+            {
+              "name": "eth1",
+              "network": "vpn-transit", 
+              "ip": {
+                "address": "10.2.0.10",
+                "mask": 24
+              },
+              "description": "To VPN tunnel"
+            }
+          ],
+          "vpn_integration": {
+            "tunnel_endpoint": "${AWS_VPN_TUNNEL_IP}",
+            "remote_endpoint": "${GCP_VPN_TUNNEL_IP}",
+            "psk": "${VPN_SHARED_SECRET}",
+            "encryption": "aes256-gcm",
+            "integrity": "sha256",
+            "dh_group": 14
+          },
+          "source_ip_preservation": {
+            "method": "policy_routing",
+            "preserve_original_client_ips": true,
+            "nat_bypass_rules": [
+              {
+                "protocol": "udp",
+                "dst_port": 8081,
+                "action": "bypass_nat"
+              }
+            ]
+          }
+        },
+        "gcp-fdi-forwarder": {
+          "description": "GCP FDI service forwarder (production)",
+          "dockerfile": "src/containers/Dockerfile.gcp-fdi-forwarder", 
+          "config_script": "src/containers/gcp-fdi-forwarder-config.sh",
+          "deployment": {
+            "gcp_instance_type": "n2-highmem-4",
+            "region": "us-central1",
+            "zone": "us-central1-a",
+            "service_account": "fdi-forwarder@${GCP_PROJECT_ID}.iam.gserviceaccount.com",
+            "network_tags": ["fdi-forwarder", "allow-health-checks"]
+          },
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "vpn-transit",
+              "ip": {
+                "address": "10.2.0.20",
+                "mask": 24
+              },
+              "description": "From VPN tunnel"
+            },
+            {
+              "name": "eth1",
+              "network": "gcp-fdi-ingress",
+              "ip": {
+                "address": "10.3.0.10", 
+                "mask": 24
+              },
+              "description": "To FDI GKE service"
+            }
+          ],
+          "fdi_gke_integration": {
+            "cluster_name": "fdi-processing-cluster",
+            "service_name": "fdi-ingress-service",
+            "service_port": 8081,
+            "load_balancer": {
+              "type": "internal",
+              "ip": "100.76.10.11",
+              "health_check_path": "/health",
+              "session_affinity": "CLIENT_IP"
+            },
+            "gke_endpoints": [
+              "10.3.0.101:8081",
+              "10.3.0.102:8081", 
+              "10.3.0.103:8081"
+            ]
+          },
+          "monitoring": {
+            "prometheus_enabled": true,
+            "metrics_port": 9090,
+            "health_check_port": 8080,
+            "log_level": "info",
+            "custom_metrics": [
+              "packets_forwarded_total",
+              "source_ip_preserved_total",
+              "fdi_service_latency_seconds"
+            ]
+          }
+        }
+      },
+      "traffic_flow": {
+        "description": "Production traffic flow: AWS FCR → Mirror Target → VPN → GCP FDI",
+        "source": {
+          "type": "aws_traffic_mirror",
+          "protocols": ["netflow", "sflow", "ipfix"],
+          "expected_pps": 50000,
+          "expected_bandwidth": "1Gbps",
+          "packet_sizes": [64, 512, 1024, 1400, 1500]
+        },
+        "processing_stages": [
+          {
+            "stage": "aws_mirror_target",
+            "function": "vxlan_decap_dnat",
+            "input_port": 4789,
+            "output_port": 8081,
+            "preserves": ["source_ip", "original_payload"]
+          },
+          {
+            "stage": "vpn_gateway",
+            "function": "source_ip_preservation",
+            "encryption": "ipsec",
+            "preserves": ["source_ip", "flow_context"]
+          },
+          {
+            "stage": "gcp_fdi_forwarder", 
+            "function": "load_balance_to_gke",
+            "target": "fdi_service",
+            "preserves": ["source_ip", "session_context"]
+          }
+        ],
+        "destination": {
+          "service": "gcp_fdi_gke",
+          "endpoint": "100.76.10.11:8081",
+          "protocol": "udp",
+          "expected_source_ip_preservation": true
+        }
+      },
+      "production_settings": {
+        "performance": {
+          "high_performance_mode": true,
+          "numa_optimization": true,
+          "cpu_isolation": {
+            "aws_instance": ["2-15"],
+            "gcp_instance": ["2-7"]
+          },
+          "memory": {
+            "huge_pages": "16GB",
+            "vpp_main_heap": "4GB",
+            "buffer_allocation": 131072
+          },
+          "network_optimization": {
+            "sr_iov": true,
+            "dpdk_mode": false,
+            "polling_mode": true,
+            "interrupt_mode": false
+          }
+        },
+        "reliability": {
+          "container_restart_policy": "always",
+          "health_check_interval": 30,
+          "failure_threshold": 3,
+          "recovery_timeout": 300,
+          "auto_scaling": {
+            "enabled": false,
+            "min_replicas": 1,
+            "max_replicas": 3,
+            "cpu_threshold": 80
+          }
+        },
+        "monitoring_and_alerting": {
+          "log_aggregation": {
+            "aws": "cloudwatch",
+            "gcp": "stackdriver"
+          },
+          "metrics_collection": {
+            "interval": 15,
+            "retention": "30d",
+            "dashboards": ["traffic_flow", "performance", "errors"]
+          },
+          "alerting_rules": [
+            {
+              "name": "packet_drop_rate",
+              "threshold": "0.1%",
+              "severity": "warning"
+            },
+            {
+              "name": "source_ip_preservation_failure",
+              "threshold": "0.01%", 
+              "severity": "critical"
+            },
+            {
+              "name": "end_to_end_latency",
+              "threshold": "100ms",
+              "severity": "warning"
+            },
+            {
+              "name": "fdi_service_unavailable",
+              "threshold": "service_down",
+              "severity": "critical"
+            }
+          ]
+        },
+        "security": {
+          "encryption_at_rest": true,
+          "encryption_in_transit": true,
+          "network_policies": {
+            "aws": ["sg-vpp-mirror-target", "sg-internal-processing"],
+            "gcp": ["fdi-forwarder-policy", "gke-ingress-policy"]
+          },
+          "access_control": {
+            "ssh_keys": "production_keys_only",
+            "service_accounts": "least_privilege",
+            "audit_logging": true
+          }
+        },
+        "backup_and_disaster_recovery": {
+          "configuration_backup": {
+            "frequency": "daily",
+            "retention": "30d",
+            "location": "s3://vpp-config-backup"
+          },
+          "traffic_replay": {
+            "pcap_storage": true,
+            "replay_capability": true,
+            "storage_duration": "7d"
+          },
+          "failover": {
+            "cross_region_support": false,
+            "rto": "15m",
+            "rpo": "5m"
+          }
+        }
+      }
+    }
+  }
+}

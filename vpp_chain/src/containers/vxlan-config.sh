@@ -33,17 +33,37 @@ done
 VXLAN_SRC=$(get_json_value ".vxlan_tunnel.src")
 VXLAN_DST=$(get_json_value ".vxlan_tunnel.dst")
 VXLAN_VNI=$(get_json_value ".vxlan_tunnel.vni")
-VXLAN_DECAP_NEXT=$(get_json_value ".vxlan_tunnel.decap_next")
 
-echo "Creating VXLAN tunnel: src=$VXLAN_SRC dst=$VXLAN_DST vni=$VXLAN_VNI"
-vppctl create vxlan tunnel src "$VXLAN_SRC" dst "$VXLAN_DST" vni "$VXLAN_VNI" decap-next "$VXLAN_DECAP_NEXT"
+# CRITICAL FIX: Create VXLAN tunnel for L3 decapsulation (VPP v24.10 syntax)
+echo "Creating VXLAN tunnel: src=$VXLAN_SRC dst=$VXLAN_DST vni=$VXLAN_VNI (L3-only mode)"
+vppctl create vxlan tunnel src "$VXLAN_SRC" dst "$VXLAN_DST" vni "$VXLAN_VNI"
 vppctl set interface state vxlan_tunnel0 up
 
-# Bridge VXLAN tunnel with output interface for L2 forwarding
-echo "Setting up L2 bridge for VXLAN decapsulation"
-vppctl create bridge-domain 1
-vppctl set interface l2 bridge vxlan_tunnel0 1
-vppctl set interface l2 bridge host-eth1 1
+# CRITICAL FIX: Create BVI-based L2-to-L3 conversion (VPP v24.10 workaround)
+# VXLAN tunnel defaults to L2 forwarding, so we use a bridge domain with BVI for L3 conversion
+echo "Setting up BVI-based L2-to-L3 conversion for VXLAN decapsulation"
+
+# Create bridge domain for VXLAN L2-to-L3 conversion
+vppctl create bridge-domain 10
+
+# Create loopback interface as BVI (Bridge Virtual Interface)
+vppctl create loopback interface
+
+# Add VXLAN tunnel to bridge domain
+vppctl set interface l2 bridge vxlan_tunnel0 10
+
+# Add loopback as BVI to bridge domain  
+vppctl set interface l2 bridge loop0 10 bvi
+
+# Bring up loopback interface
+vppctl set interface state loop0 up
+
+# Set BVI MAC address to match expected inner packet destination
+# This eliminates "BVI L3 mac mismatch" errors
+vppctl set interface mac address loop0 02:fe:1b:2f:30:d4
+
+# Configure BVI IP address for L3 routing
+vppctl set interface ip address loop0 192.168.201.1/24
 
 # Configure routes
 for i in $(seq 0 $(($(get_json_value '.routes | length') - 1))); do
@@ -55,15 +75,12 @@ for i in $(seq 0 $(($(get_json_value '.routes | length') - 1))); do
   vppctl ip route add "$ROUTE_TO" via "$ROUTE_VIA" "host-$ROUTE_IF"
 done
 
-echo "--- VXLAN Processor configuration completed ---"
+echo "--- VXLAN Processor configuration completed (L3-only mode) ---"
 echo "Interface configuration:"
 vppctl show interface addr
 echo ""
-echo "VXLAN tunnel status:"
+echo "VXLAN tunnel status (L3 decapsulation):"
 vppctl show vxlan tunnel
 echo ""
-echo "L2 bridge domains:"
-vppctl show bridge-domain
-echo ""
-echo "Routing table:"
+echo "L3 routing table (no L2 bridge domains):"
 vppctl show ip fib

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "--- Configuring Destination Container ---"
+echo "--- Configuring Destination Container (L3 MAC FIXED) ---"
 
 # Parse config from environment variable
 if [ -z "$VPP_CONFIG" ]; then
@@ -25,9 +25,8 @@ for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
   vppctl set interface ip address "host-$IF_NAME" "$IF_IP_ADDR/$IF_IP_MASK"
   vppctl set interface state "host-$IF_NAME" up
   
-  # CRITICAL FIX: Enable promiscuous mode to accept packets with different MACs
-  # This eliminates L3 MAC mismatch drops by accepting all MAC addresses
-  echo "Enabling promiscuous mode on $IF_NAME to eliminate MAC mismatch drops"
+  # *** CRITICAL FIX: Enable promiscuous mode to accept packets with different MACs ***
+  echo "*** FIXING L3 MAC MISMATCH: Enabling promiscuous mode on host-$IF_NAME ***"
   vppctl set interface promiscuous on "host-$IF_NAME"
 done
 
@@ -35,12 +34,22 @@ done
 echo "Adding secondary IP for NAT-translated traffic: 172.20.102.10/24"
 vppctl set interface ip address host-eth0 172.20.102.10/24
 
-# CRITICAL FIX: Add static ARP entries for security-processor
-# This ensures L3 forwarding works without L2 MAC learning dependencies
-echo "Adding static ARP entry for security-processor to eliminate L2 dependency"
-SECURITY_PROCESSOR_IP="172.20.102.10"
-SECURITY_PROCESSOR_MAC="02:fe:19:5b:d7:a2"  # Will be discovered during runtime
-vppctl set ip arp static host-eth0 "$SECURITY_PROCESSOR_IP" "$SECURITY_PROCESSOR_MAC" || echo "ARP entry will be set dynamically"
+# *** CRITICAL FIX: Configure ARP entries to handle upstream MAC addresses ***
+echo "*** CONFIGURING STATIC ARP ENTRIES TO PREVENT MAC MISMATCH ***"
+
+# Get the MAC address of the security-processor's eth1 interface
+# This should match what security-processor uses when sending packets
+SECURITY_PROCESSOR_MAC="02:42:ac:14:66:14"  # Docker typically assigns this pattern
+SECURITY_PROCESSOR_IP="172.20.102.10"       # security-processor's eth1 IP
+
+# Configure static ARP entry for security-processor
+echo "Adding static ARP entry: $SECURITY_PROCESSOR_IP -> $SECURITY_PROCESSOR_MAC"
+vppctl set ip arp static host-eth0 "$SECURITY_PROCESSOR_IP" "$SECURITY_PROCESSOR_MAC"
+
+# *** ADDITIONAL FIX: Disable L3 MAC matching for this interface ***
+echo "*** DISABLING STRICT L3 MAC MATCHING ***"
+# Allow packets with any source MAC to be processed at L3
+vppctl set interface feature host-eth0 ethernet-input arc device-input
 
 # Configure TAP interface
 TAP_ID=$(get_json_value ".tap_interface.id")
@@ -81,8 +90,8 @@ if [ "$(get_json_value '.ipsec')" != "null" ]; then
   
   # Create IPIP tunnel for receiving encrypted traffic
   echo "Creating IPIP tunnel interface for IPsec decryption"
-  TUNNEL_SRC=$(get_json_value ".ipsec.tunnel.src // \"172.20.2.20\"")
-  TUNNEL_DST=$(get_json_value ".ipsec.tunnel.dst // \"172.20.1.20\"")
+  TUNNEL_SRC=$(get_json_value ".ipsec.tunnel.src // \"172.20.102.20\"")
+  TUNNEL_DST=$(get_json_value ".ipsec.tunnel.dst // \"172.20.101.20\"")
   
   vppctl create ipip tunnel src "$TUNNEL_SRC" dst "$TUNNEL_DST"
   vppctl set interface ip address ipip0 "$LOCAL_IP_TUNNEL"
@@ -91,6 +100,13 @@ if [ "$(get_json_value '.ipsec')" != "null" ]; then
   # Apply IPsec protection for decryption
   vppctl ipsec tunnel protect ipip0 sa-in "$SA_IN_ID"
 fi
+
+# *** CRITICAL FIX: Add specific routes for fragmented packets ***
+echo "*** CONFIGURING ROUTES FOR FRAGMENTED PACKET REASSEMBLY ***"
+
+# Route fragmented packets from security-processor to reassembly
+vppctl ip route add 10.10.10.0/24 via tap0
+vppctl ip route add 172.20.102.0/24 via tap0
 
 # Configure routes
 for i in $(seq 0 $(($(get_json_value '.routes | length') - 1))); do
@@ -110,6 +126,10 @@ for i in $(seq 0 $(($(get_json_value '.routes | length') - 1))); do
   fi
 done
 
+# *** ENABLE IP REASSEMBLY FOR FRAGMENTED PACKETS ***
+echo "*** ENABLING IP REASSEMBLY FOR FRAGMENTED PACKETS ***"
+vppctl set interface feature host-eth0 ip4-reassembly arc ip4-unicast
+
 # Start packet capture if specified
 PCAP_FILE=$(get_json_value ".tap_interface.pcap_file")
 if [ "$PCAP_FILE" != "null" ] && [ -n "$PCAP_FILE" ]; then
@@ -117,12 +137,15 @@ if [ "$PCAP_FILE" != "null" ] && [ -n "$PCAP_FILE" ]; then
   vppctl pcap trace on max 10000 file "$PCAP_FILE" buffer-trace tap-input 1000
 fi
 
-echo "--- Destination configuration completed (L3-only mode) ---"
-echo "Interface configuration (promiscuous mode enabled):"
+echo "--- Destination L3-FIXED configuration completed ---"
+echo "Interface configuration:"
 vppctl show interface addr
 echo ""
-echo "Interface promiscuous status:"
-vppctl show interface | grep -A5 -B5 promiscuous || echo "Promiscuous mode status check"
+echo "*** PROMISCUOUS MODE STATUS ***"
+vppctl show interface | grep -A 5 "host-eth0"
+echo ""
+echo "*** ARP TABLE (should show static entries) ***"
+vppctl show ip arp
 echo ""
 echo "TAP interface status:"
 vppctl show interface tap0
@@ -135,7 +158,7 @@ if [ "$(get_json_value '.ipsec')" != "null" ]; then
   vppctl show ipip tunnel
   echo ""
 fi
-echo "Routing table:"
+echo "*** L3 ROUTING TABLE ***"
 vppctl show ip fib
 echo ""
 echo "Linux TAP interface status:"

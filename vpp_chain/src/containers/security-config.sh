@@ -25,6 +25,10 @@ for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
   vppctl set interface ip address "host-$IF_NAME" "$IF_IP_ADDR/$IF_IP_MASK"
   vppctl set interface state "host-$IF_NAME" up
   
+  # CRITICAL FIX: Enable promiscuous mode to eliminate L3 MAC mismatch drops
+  echo "Enabling promiscuous mode on $IF_NAME to eliminate MAC mismatch drops"
+  vppctl set interface promiscuous on "host-$IF_NAME"
+  
   # Set MTU if specified
   IF_MTU=$(get_json_value ".interfaces[$i].mtu")
   if [ "$IF_MTU" != "null" ] && [ -n "$IF_MTU" ]; then
@@ -74,9 +78,9 @@ TUNNEL_DST=$(get_json_value ".ipsec.tunnel.dst")
 LOCAL_IP_TUNNEL=$(get_json_value ".ipsec.tunnel.local_ip")
 REMOTE_IP_TUNNEL=$(get_json_value ".ipsec.tunnel.remote_ip")
 
-# Create IPsec Security Associations
-vppctl ipsec sa add "$SA_OUT_ID" spi "$SA_OUT_SPI" esp crypto-alg "$SA_OUT_CRYPTO_ALG" crypto-key "$SA_OUT_CRYPTO_KEY" tunnel-src "$TUNNEL_SRC" tunnel-dst "$TUNNEL_DST"
-vppctl ipsec sa add "$SA_IN_ID" spi "$SA_IN_SPI" esp crypto-alg "$SA_IN_CRYPTO_ALG" crypto-key "$SA_IN_CRYPTO_KEY" tunnel-src "$TUNNEL_DST" tunnel-dst "$TUNNEL_SRC"
+# Create IPsec Security Associations (VPP v24.10 syntax)
+vppctl ipsec sa add "$SA_OUT_ID" spi "$SA_OUT_SPI" esp crypto-alg "$SA_OUT_CRYPTO_ALG" crypto-key "$SA_OUT_CRYPTO_KEY"
+vppctl ipsec sa add "$SA_IN_ID" spi "$SA_IN_SPI" esp crypto-alg "$SA_IN_CRYPTO_ALG" crypto-key "$SA_IN_CRYPTO_KEY"
 
 # Create IPIP tunnel interface
 echo "Creating IPIP tunnel interface for IPsec"
@@ -108,6 +112,67 @@ for i in $(seq 0 $(($(get_json_value '.routes | length') - 1))); do
     vppctl ip route add "$ROUTE_TO" via "$ROUTE_VIA" "host-$ROUTE_IF"
   fi
 done
+
+# Function to discover remote VPP interface MAC address dynamically  
+discover_remote_vpp_mac() {
+    local remote_ip="$1"
+    local interface="$2"
+    local container_name="$3"
+    
+    echo "Discovering VPP interface MAC for $remote_ip from container $container_name..."
+    
+    # Method 1: Direct VPP interface query (most reliable)
+    if command -v docker >/dev/null 2>&1; then
+        MAC=$(docker exec "$container_name" vppctl show hardware-interfaces host-eth0 2>/dev/null | grep "Ethernet address" | awk '{print $3}' | tr -d ' \t\n\r')
+        if [ -n "$MAC" ] && [ "$MAC" != "" ]; then
+            echo "Discovered VPP interface MAC for $remote_ip from $container_name: $MAC"
+            echo "$MAC"
+            return 0
+        fi
+    fi
+    
+    # Method 2: Fallback to ARP discovery (less reliable, may get bridge MAC)
+    echo "Falling back to ARP-based discovery..."
+    local max_attempts=10
+    local attempt=0
+    
+    while [ $attempt -lt $max_attempts ]; do
+        # Try to ping to trigger ARP resolution
+        ping -c 1 -W 1 "$remote_ip" >/dev/null 2>&1 || true
+        
+        # Check if we got the MAC address
+        MAC=$(vppctl show ip neighbors | grep "$remote_ip" | awk '{print $4}' | head -1)
+        if [ -n "$MAC" ] && [ "$MAC" != "" ]; then
+            echo "Discovered MAC for $remote_ip via ARP: $MAC (Warning: may be bridge MAC)"
+            echo "$MAC"
+            return 0
+        fi
+        
+        sleep 0.5
+        attempt=$((attempt + 1))
+    done
+    
+    echo "Warning: Could not discover MAC for $remote_ip after $max_attempts attempts" >&2
+    return 1
+}
+
+# Dynamic MAC discovery for destination container
+# Get destination container IP from routes
+DESTINATION_IP=$(get_json_value '.routes[] | select(.interface == "eth1") | .via' | head -1)
+if [ -n "$DESTINATION_IP" ] && [ "$DESTINATION_IP" != "null" ]; then
+    echo "Dynamically discovering MAC for destination container at $DESTINATION_IP..."
+    
+    # Discover the MAC address dynamically from destination container's VPP interface
+    DEST_MAC=$(discover_remote_vpp_mac "$DESTINATION_IP" "host-eth1" "destination")
+    if [ $? -eq 0 ] && [ -n "$DEST_MAC" ]; then
+        echo "Setting correct neighbor entry: $DESTINATION_IP -> $DEST_MAC"
+        vppctl set ip neighbor host-eth1 "$DESTINATION_IP" "$DEST_MAC"
+    else
+        echo "Warning: Failed to discover destination MAC, using existing neighbor table"
+    fi
+else
+    echo "No destination IP found in routes, skipping MAC discovery"
+fi
 
 echo "--- Security Processor configuration completed ---"
 echo "Interface configuration:"

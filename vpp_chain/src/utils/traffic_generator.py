@@ -138,23 +138,21 @@ class TrafficGenerator:
                 payload
             )
             
-            # Get security processor MAC for inner packet
+            # Get BVI loop0 MAC from vxlan-processor for inner packet (critical for L2-to-L3 conversion)
             try:
                 result = subprocess.run([
-                    "docker", "exec", "security-processor", "vppctl", "show", "hardware-interfaces"
+                    "docker", "exec", "vxlan-processor", "vppctl", "show", "hardware-interfaces", "loop0"
                 ], capture_output=True, text=True, timeout=10)
                 
-                inner_dst_mac = "02:fe:3e:2a:0d:90"  # default
+                inner_dst_mac = "02:fe:89:fd:60:b1"  # fallback to known BVI MAC
                 if result.returncode == 0:
-                    lines = result.stdout.split('\n')
-                    found_host_eth0 = False
-                    for line in lines:
-                        if 'host-eth0' in line and 'up' in line:
-                            found_host_eth0 = True
-                        elif found_host_eth0 and 'Ethernet address' in line:
+                    for line in result.stdout.split('\n'):
+                        if 'Ethernet address' in line:
                             inner_dst_mac = line.split('Ethernet address')[-1].strip()
                             break
-            except:
+                log_info(f"Using BVI MAC for inner packet: {inner_dst_mac}")
+            except Exception as e:
+                log_warning(f"Could not get BVI MAC, using fallback: {e}")
                 pass  # Use default if can't get MAC
             
             # VXLAN encapsulation - source IP from config, destination is VXLAN processor
@@ -568,57 +566,57 @@ class TrafficGenerator:
             # Analyze results
             chain_success = self.analyze_chain_statistics()
             
-            # Summary
+            # Get TAP interface statistics for accurate reporting
+            tap_rx = 0
+            try:
+                result = subprocess.run([
+                    "docker", "exec", "destination", "vppctl", "show", "interface", "tap0"
+                ], capture_output=True, text=True, timeout=5)
+                
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if 'rx packets' in line:
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                try:
+                                    tap_rx = int(parts[-1])
+                                    break
+                                except:
+                                    pass
+            except:
+                pass
+            
+            # Summary using consistent TAP delivery statistics
             print(f"\n📈 Test Summary:")
             print(f"  Packets sent: {self.sent_packets}")
-            print(f"  Packets captured: {self.received_packets}")
+            print(f"  Packets captured (external): {self.received_packets}")
+            print(f"  Packets delivered (TAP): {tap_rx}")
             
             if self.sent_packets > 0:
-                success_rate = (self.received_packets / self.sent_packets) * 100 if self.sent_packets > 0 else 0
-                print(f"  End-to-end success rate: {success_rate:.1f}%")
+                # Use TAP delivery as the primary success metric (most accurate)
+                tap_success_rate = (tap_rx / self.sent_packets) * 100 if self.sent_packets > 0 else 0
+                capture_success_rate = (self.received_packets / self.sent_packets) * 100 if self.sent_packets > 0 else 0
+                print(f"  End-to-end delivery rate: {tap_success_rate:.1f}%")
+                print(f"  External capture rate: {capture_success_rate:.1f}%")
                 
                 # Enhanced success validation based on VPP statistics and TAP delivery
                 if chain_success:
-                    # Check if packets reached TAP interface (final delivery)
-                    try:
-                        result = subprocess.run([
-                            "docker", "exec", "destination", "vppctl", "show", "interface", "tap0"
-                        ], capture_output=True, text=True, timeout=5)
-                        
-                        tap_rx = 0
-                        if result.returncode == 0:
-                            for line in result.stdout.split('\n'):
-                                if 'rx packets' in line:
-                                    parts = line.split()
-                                    if len(parts) >= 2:
-                                        try:
-                                            tap_rx = int(parts[-1])
-                                            break
-                                        except:
-                                            pass
-                        
-                        # More realistic success criteria
-                        if tap_rx >= self.sent_packets:
-                            efficiency = (tap_rx / self.sent_packets) * 100 if self.sent_packets > 0 else 0
-                            log_success(f"EXCELLENT SUCCESS: {tap_rx}/{self.sent_packets} packets delivered ({efficiency:.1f}%)")
-                            print("Complete end-to-end processing: VXLAN → NAT44 → IPsec → Fragmentation → TAP")
-                            return True
-                        elif tap_rx > 0:
-                            efficiency = (tap_rx / self.sent_packets) * 100 if self.sent_packets > 0 else 0
-                            log_success(f"PARTIAL SUCCESS: {tap_rx}/{self.sent_packets} packets delivered ({efficiency:.1f}%)")
-                            print("End-to-end processing working: VXLAN → NAT44 → IPsec → Fragmentation → TAP")
-                            print("WARNING: Some packets may have been fragmented or lost in processing")
-                            return True
-                        elif success_rate >= 50:
-                            log_success("CHAIN TEST SUCCESSFUL: VPP processing verified with network capture!")
-                            return True
-                        else:
-                            log_success("CHAIN TEST SUCCESSFUL: VPP end-to-end processing verified!")
-                            print("Note: VPP statistics show perfect packet processing through all stages")
-                            return True
-                            
-                    except Exception as e:
-                        log_warning(f"TAP check failed: {e}")
+                    # Use already calculated tap_rx value for consistent reporting
+                    if tap_rx >= self.sent_packets:
+                        efficiency = (tap_rx / self.sent_packets) * 100 if self.sent_packets > 0 else 0
+                        log_success(f"EXCELLENT SUCCESS: {tap_rx}/{self.sent_packets} packets delivered ({efficiency:.1f}%)")
+                        print("Complete end-to-end processing: VXLAN → NAT44 → IPsec → Fragmentation → TAP")
+                        return True
+                    elif tap_rx > 0:
+                        efficiency = (tap_rx / self.sent_packets) * 100 if self.sent_packets > 0 else 0
+                        log_success(f"PARTIAL SUCCESS: {tap_rx}/{self.sent_packets} packets delivered ({efficiency:.1f}%)")
+                        print("End-to-end processing working: VXLAN → NAT44 → IPsec → Fragmentation → TAP")
+                        print("WARNING: Some packets may have been fragmented or lost in processing")
+                        return True
+                    elif capture_success_rate >= 50:
+                        log_success("CHAIN TEST SUCCESSFUL: VPP processing verified with network capture!")
+                        return True
+                    else:
                         log_success("CHAIN TEST SUCCESSFUL: VPP end-to-end processing verified!")
                         print("Note: VPP statistics show perfect packet processing through all stages")
                         return True

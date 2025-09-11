@@ -14,6 +14,34 @@ get_json_value() {
   echo "$VPP_CONFIG" | jq -r "$1"
 }
 
+# Function to generate MAC address from IP address
+# Uses MD5 hash of IP to create consistent, deterministic MAC addresses
+generate_mac_from_ip() {
+  local ip="$1"
+  local mac_suffix=$(echo "$ip" | md5sum | cut -c1-10 | sed 's/\(..\)/\1:/g' | sed 's/:$//')
+  echo "02:fe:$mac_suffix"
+}
+
+# Function to discover MAC address of remote interface
+# Attempts to get MAC via ARP, falls back to generated MAC
+discover_remote_mac() {
+  local remote_ip="$1"
+  local interface="$2"
+  
+  # Try to ping the remote IP first to populate ARP table
+  vppctl ping "$remote_ip" repeat 3 >/dev/null 2>&1 || true
+  
+  # Try to get MAC from VPP ARP table
+  local discovered_mac=$(vppctl show ip neighbors | grep "$remote_ip" | awk '{print $4}' | head -1)
+  
+  if [ -n "$discovered_mac" ] && [ "$discovered_mac" != "00:00:00:00:00:00" ]; then
+    echo "$discovered_mac"
+  else
+    # Fallback to generated MAC
+    generate_mac_from_ip "$remote_ip"
+  fi
+}
+
 # Configure interfaces
 for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
   IF_NAME=$(get_json_value ".interfaces[$i].name")
@@ -39,7 +67,12 @@ vppctl set interface ip address host-eth0 172.20.102.10/24
 # This ensures L3 forwarding works without L2 MAC learning dependencies
 echo "Adding static ARP entry for security-processor to eliminate L2 dependency"
 SECURITY_PROCESSOR_IP="172.20.102.10"
-SECURITY_PROCESSOR_MAC="02:fe:19:5b:d7:a2"  # Will be discovered during runtime
+
+# Dynamically determine security processor MAC address
+echo "Discovering MAC address for security-processor at $SECURITY_PROCESSOR_IP"
+SECURITY_PROCESSOR_MAC=$(discover_remote_mac "$SECURITY_PROCESSOR_IP" "host-eth0")
+echo "Using MAC address $SECURITY_PROCESSOR_MAC for security-processor"
+
 vppctl set ip arp static host-eth0 "$SECURITY_PROCESSOR_IP" "$SECURITY_PROCESSOR_MAC" || echo "ARP entry will be set dynamically"
 
 # Configure TAP interface

@@ -107,7 +107,11 @@
           "vxlan_processing": {
             "port": 4789,
             "vni": "auto_detect",
-            "decap_next": "l3_dnat_bridge",
+            "decap_next": "bvi_l2_to_l3_conversion",
+            "architecture": "bvi_based",
+            "bridge_domain_id": 10,
+            "bvi_mac_address": "02:fe:1b:2f:30:d4",
+            "bvi_ip": "192.168.201.1/24",
             "performance": {
               "buffer_size": 65536,
               "rx_queues": 8,

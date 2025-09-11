@@ -14,6 +14,34 @@ get_json_value() {
   echo "$VPP_CONFIG" | jq -r "$1"
 }
 
+# Function to generate MAC address from IP address
+# Uses MD5 hash of IP to create consistent, deterministic MAC addresses
+generate_mac_from_ip() {
+  local ip="$1"
+  local mac_suffix=$(echo "$ip" | md5sum | cut -c1-10 | sed 's/\(..\)/\1:/g' | sed 's/:$//')
+  echo "02:fe:$mac_suffix"
+}
+
+# Function to discover MAC address of remote interface
+# Attempts to get MAC via ARP, falls back to generated MAC
+discover_remote_mac() {
+  local remote_ip="$1"
+  local interface="$2"
+  
+  # Try to ping the remote IP first to populate ARP table
+  vppctl ping "$remote_ip" repeat 3 >/dev/null 2>&1 || true
+  
+  # Try to get MAC from VPP ARP table
+  local discovered_mac=$(vppctl show ip neighbors | grep "$remote_ip" | awk '{print $4}' | head -1)
+  
+  if [ -n "$discovered_mac" ] && [ "$discovered_mac" != "00:00:00:00:00:00" ]; then
+    echo "$discovered_mac"
+  else
+    # Fallback to generated MAC
+    generate_mac_from_ip "$remote_ip"
+  fi
+}
+
 # Configure interfaces
 for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
   IF_NAME=$(get_json_value ".interfaces[$i].name")
@@ -25,8 +53,9 @@ for i in $(seq 0 $(($(get_json_value '.interfaces | length') - 1))); do
   vppctl set interface ip address "host-$IF_NAME" "$IF_IP_ADDR/$IF_IP_MASK"
   vppctl set interface state "host-$IF_NAME" up
   
-  # Enable promiscuous mode for better packet reception (VPP interfaces only)
-  # vppctl set interface promiscuous on "host-$IF_NAME" # DISABLED FOR HOST SAFETY
+  # CRITICAL FIX: Enable promiscuous mode to eliminate L3 MAC mismatch drops
+  echo "Enabling promiscuous mode on $IF_NAME to eliminate MAC mismatch drops"
+  vppctl set interface promiscuous on "host-$IF_NAME"
 done
 
 # Create VXLAN tunnel
@@ -58,12 +87,17 @@ vppctl set interface l2 bridge loop0 10 bvi
 # Bring up loopback interface
 vppctl set interface state loop0 up
 
-# Set BVI MAC address to match expected inner packet destination
+# Set BVI MAC address dynamically based on BVI IP
 # This eliminates "BVI L3 mac mismatch" errors
-vppctl set interface mac address loop0 02:fe:1b:2f:30:d4
+BVI_IP_CIDR=$(get_json_value ".bvi.ip")
+BVI_IP=$(echo "$BVI_IP_CIDR" | cut -d'/' -f1)
+BVI_MAC=$(generate_mac_from_ip "$BVI_IP")
+echo "Setting BVI MAC address to $BVI_MAC (derived from IP $BVI_IP)"
+vppctl set interface mac address loop0 "$BVI_MAC"
 
 # Configure BVI IP address for L3 routing
-vppctl set interface ip address loop0 192.168.201.1/24
+echo "Configuring BVI IP address: $BVI_IP_CIDR"
+vppctl set interface ip address loop0 "$BVI_IP_CIDR"
 
 # Configure routes
 for i in $(seq 0 $(($(get_json_value '.routes | length') - 1))); do

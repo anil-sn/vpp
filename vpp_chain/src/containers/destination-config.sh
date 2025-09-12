@@ -147,6 +147,26 @@ if [ "$(get_json_value '.ipsec')" != "null" ]; then
   echo "Applying IPsec tunnel protection for decryption with SA $SA_IN_ID"
   vppctl ipsec tunnel protect ipip0 sa-in "$SA_IN_ID"
   
+  # Configure IPsec SPD to handle ESP packets arriving on host interface
+  echo "Configuring IPsec SPD to process ESP packets on host interface"
+  vppctl ipsec spd add 1
+  vppctl ipsec interface host-eth0 spd 1
+  
+  # Add SPD policy for ESP traffic decryption 
+  SECURITY_PROC_IP=$(get_json_value ".ipsec.tunnel.dst // \"172.20.101.20\"")
+  LOCAL_HOST_IP=$(get_json_value ".ipsec.tunnel.src // \"172.20.102.20\"")
+  
+  # Policy for incoming ESP traffic (decrypt)
+  vppctl ipsec policy add spd 1 priority 10 inbound action protect sa "$SA_IN_ID" \
+    remote-ip-range "$SECURITY_PROC_IP" - "$SECURITY_PROC_IP" \
+    local-ip-range "$LOCAL_HOST_IP" - "$LOCAL_HOST_IP" protocol 50
+  
+  # Policy for decrypted traffic (bypass) 
+  vppctl ipsec policy add spd 1 priority 100 inbound action bypass \
+    protocol 17 remote-port-range 1024 - 65535 local-port-range 1024 - 65535
+    
+  echo "IPsec SPD policies configured for ESP decryption"
+  
   # Verify IPsec protection was applied
   echo "Verifying IPsec tunnel protection:"
   vppctl show interface ipip0 | head -5
@@ -190,6 +210,9 @@ echo ""
 if [ "$(get_json_value '.ipsec')" != "null" ]; then
   echo "IPsec status:"
   vppctl show ipsec sa
+  echo ""
+  echo "IPsec SPD status:"
+  vppctl show ipsec spd
   echo ""
   echo "IPIP tunnel status:"
   vppctl show ipip tunnel

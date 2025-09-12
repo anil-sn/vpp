@@ -570,16 +570,19 @@ class TrafficGenerator:
             tap_rx = 0
             try:
                 result = subprocess.run([
-                    "docker", "exec", "destination", "vppctl", "show", "interface", "tap0"
+                    "docker", "exec", "destination", "vppctl", "show", "hardware-interfaces", "tap0"
                 ], capture_output=True, text=True, timeout=5)
                 
                 if result.returncode == 0:
-                    for line in result.stdout.split('\n'):
-                        if 'rx packets' in line:
-                            parts = line.split()
-                            if len(parts) >= 2:
+                    lines = result.stdout.split('\n')
+                    for i, line in enumerate(lines):
+                        if 'RX QUEUE : Total Packets' in line and i + 1 < len(lines):
+                            # Next line contains the queue number and packet count
+                            next_line = lines[i + 1].strip()
+                            parts = next_line.split()
+                            if len(parts) >= 3:  # Format: "0 : 16"
                                 try:
-                                    tap_rx = int(parts[-1])
+                                    tap_rx = int(parts[2])  # Third element is packet count
                                     break
                                 except:
                                     pass

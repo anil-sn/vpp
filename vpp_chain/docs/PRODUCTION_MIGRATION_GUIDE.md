@@ -198,17 +198,19 @@ echo "Next: Generate production.json configuration"
 
 #### Running the Discovery Process
 
-```bash
-# Make discovery script executable
-chmod +x scripts/discover_production_environment.sh
+**Note**: The discovery script has been extracted to a standalone utility. Use the dedicated tool for comprehensive environment analysis.
 
-# Run comprehensive environment discovery
-./scripts/discover_production_environment.sh
+```bash
+# Run comprehensive environment discovery using the utility tool
+./tools/discovery/environment_discovery.sh -v
 
 # Review the discovery report
 DISCOVERY_DIR=$(ls -1dt /tmp/vpp_discovery_* | head -1)
 echo "Discovery completed. Report location: $DISCOVERY_DIR"
 cat "$DISCOVERY_DIR/discovery_report.txt"
+
+# For help and additional options
+./tools/discovery/environment_discovery.sh -h
 ```
 
 ### 1.2 Traffic Analysis and Integration Points

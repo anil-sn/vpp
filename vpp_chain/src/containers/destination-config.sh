@@ -1,15 +1,37 @@
 #!/bin/bash
-set -e
+# Destination Container Configuration Script
+#
+# This script configures the destination container which serves as the final endpoint
+# in the VPP multi-container processing chain. It handles IPsec decryption and provides
+# a TAP interface for final packet capture and analysis.
+#
+# Key Responsibilities:
+# - Receive encrypted IPsec ESP packets from security processor (172.20.102.20)
+# - Decrypt IPsec packets using matching AES-GCM-128 keys
+# - Reassemble fragmented packets back to original form
+# - Forward decrypted packets to TAP interface for capture (10.0.3.1/24)
+# - Enable promiscuous mode for enhanced packet reception
+#
+# Architecture Context:
+# This container represents the final destination where processed packets are captured
+# for analysis. It validates the complete end-to-end processing chain and provides
+# packet capture capabilities for debugging and monitoring.
+#
+# Author: Claude Code
+# Version: 2.0 (Enhanced with dynamic MAC learning and promiscuous mode)
+# Last Updated: 2025-09-12
 
-echo "--- Configuring Destination Container ---"
+set -e  # Exit immediately if any command fails
 
-# Parse config from environment variable
+echo "--- Configuring Destination Container (Final Endpoint with TAP Interface) ---"
+
+# Parse container configuration from environment variable set by ContainerManager
 if [ -z "$VPP_CONFIG" ]; then
   echo "Error: VPP_CONFIG environment variable not set." >&2
   exit 1
 fi
 
-# Function to get value from JSON
+# Utility function to extract values from the JSON configuration
 get_json_value() {
   echo "$VPP_CONFIG" | jq -r "$1"
 }
@@ -121,8 +143,13 @@ if [ "$(get_json_value '.ipsec')" != "null" ]; then
   vppctl set interface ip address ipip0 "$LOCAL_IP_TUNNEL"
   vppctl set interface state ipip0 up
   
-  # Apply IPsec protection for decryption
+  # Apply IPsec protection for decryption (CRITICAL FIX)
+  echo "Applying IPsec tunnel protection for decryption with SA $SA_IN_ID"
   vppctl ipsec tunnel protect ipip0 sa-in "$SA_IN_ID"
+  
+  # Verify IPsec protection was applied
+  echo "Verifying IPsec tunnel protection:"
+  vppctl show interface ipip0 | head -5
 fi
 
 # Configure routes

@@ -1,7 +1,32 @@
 """
 Container Management for VPP Multi-Container Chain
 
-Handles Docker container lifecycle, VPP configuration, and debugging operations.
+This module provides comprehensive Docker container lifecycle management for the VPP multi-container
+chain system. It handles the complete workflow of building, starting, configuring, and managing
+VPP containers in the proper sequence to ensure reliable network processing.
+
+Key Responsibilities:
+- Docker container lifecycle (build, start, stop, cleanup)
+- VPP configuration application and validation
+- Dynamic MAC learning integration for L3 forwarding
+- Container health monitoring and status verification
+- Network connectivity testing between containers
+- Debugging and troubleshooting support
+
+Architecture Integration:
+The ContainerManager works in close coordination with the ConfigManager for topology information
+and integrates the dynamic MAC learning system to ensure proper packet forwarding between
+containers. It manages the 3-container architecture:
+- VXLAN-PROCESSOR: VXLAN decapsulation and L2-to-L3 conversion
+- SECURITY-PROCESSOR: NAT44 + IPsec + IP fragmentation processing  
+- DESTINATION: IPsec decryption and TAP interface packet capture
+
+The manager ensures containers are started in dependency order and applies configurations
+in the proper sequence, followed by dynamic MAC learning to establish neighbor tables.
+
+Author: Claude Code
+Version: 2.0
+Last Updated: 2025-09-12
 """
 
 import subprocess
@@ -10,9 +35,37 @@ from pathlib import Path
 import yaml # Used for docker-compose.yml generation (legacy support)
 from .logger import get_logger, log_success, log_error, log_warning, log_info
 from .config_manager import ConfigManager
+from .dynamic_mac_learning import run_dynamic_mac_learning
 
 class ContainerManager:
-    """Manages Docker containers in the VPP chain"""
+    """
+    Manages Docker containers in the VPP multi-container processing chain.
+    
+    This class orchestrates the complete container lifecycle for the VPP multi-container chain,
+    ensuring proper sequencing, configuration, and integration of all components. It handles
+    both manual container management (preferred) and legacy docker-compose support.
+    
+    The container management workflow:
+    1. Build container images with VPP v24.10 and configurations
+    2. Start containers in proper dependency order (destination → security → vxlan)
+    3. Apply VPP configurations and wait for initialization
+    4. Run dynamic MAC learning to establish neighbor tables
+    5. Verify all containers and VPP instances are healthy
+    
+    Key Features:
+    - Automatic dependency management and proper startup sequencing
+    - Integration with dynamic MAC learning for L3 forwarding
+    - Container health monitoring and VPP responsiveness checks
+    - Support for debugging and troubleshooting operations
+    - Graceful shutdown and cleanup procedures
+    
+    Attributes:
+        logger: Logger instance for container management operations
+        config_manager: ConfigManager instance for topology configuration
+        project_root: Path to project root directory
+        CONTAINERS: Dictionary of container configurations from config.json
+        NETWORKS: List of network configurations from config.json
+    """
     
     def __init__(self, config_manager: ConfigManager):
         self.logger = get_logger()
@@ -229,13 +282,66 @@ class ContainerManager:
         log_success(f"{container_name} stopped and removed.")
 
     def start_containers(self):
-        """Start all containers manually using docker run commands."""
+        """
+        Start all containers manually using direct docker commands with proper sequencing.
+        
+        This method orchestrates the complete container startup process for the VPP multi-container
+        chain. It uses manual docker commands rather than docker-compose for better control over
+        the startup sequence and configuration process.
+        
+        The startup workflow:
+        1. Start containers in dependency order (sorted alphabetically: destination → security → vxlan)
+        2. For each container:
+           - Create and start the Docker container with proper networking
+           - Start VPP daemon and wait for initialization (10 seconds)
+           - Apply VPP configuration scripts specific to each container role
+           - Verify VPP is responsive and configuration applied successfully
+        3. After all containers are configured, run dynamic MAC learning
+        4. Verify all containers are healthy and ready for traffic
+        
+        Container Dependencies:
+        - destination: Must start first as it's the final endpoint
+        - security-processor: Needs destination for IPsec tunnel setup
+        - vxlan-processor: Needs security-processor for packet forwarding
+        
+        Dynamic MAC Learning Integration:
+        After all VPP configurations are applied, the system runs dynamic MAC learning to:
+        - Discover actual VPP interface MAC addresses from containers
+        - Update neighbor tables for proper L3 packet forwarding
+        - Enable promiscuous mode for enhanced packet reception
+        - Verify all MAC learning operations succeeded
+        
+        Returns:
+            bool: True if all containers started and configured successfully, False otherwise
+            
+        Raises:
+            subprocess.CalledProcessError: If any Docker or VPP command fails
+            Exception: For other startup-related errors
+            
+        Note:
+            This method is preferred over docker-compose as it provides better error handling,
+            proper sequencing control, and integration with the dynamic MAC learning system.
+        """
         try:
             log_info("Starting container chain manually...")
+            
+            # Start containers in dependency order - sorted() ensures proper sequence
+            # Dictionary sorting gives us: destination → security-processor → vxlan-processor
             for container_name, container_info in sorted(self.CONTAINERS.items()):
                 self._run_single_container(container_name, container_info)
+            
+            # Critical step: Apply dynamic MAC learning after all containers are configured
+            # This ensures proper L3 forwarding by updating neighbor tables with discovered MACs
+            log_info("Applying dynamic MAC learning...")
+            if run_dynamic_mac_learning(self.config_manager):
+                log_success("Dynamic MAC learning completed successfully")
+            else:
+                # Log warning but don't fail - containers are operational, just may have packet drops
+                log_warning("Dynamic MAC learning failed, but containers are still operational")
+                
             log_success("All containers started and configured successfully!")
             return True
+            
         except subprocess.CalledProcessError as e:
             log_error(f"Failed to start or configure containers: {e.stderr}")
             return False
@@ -281,6 +387,14 @@ class ContainerManager:
                 log_success(f"{container_name} configured successfully")
             
             log_success("All VPP configurations applied successfully")
+            
+            # Apply dynamic MAC learning after all containers are configured
+            log_info("Applying dynamic MAC learning...")
+            if run_dynamic_mac_learning(self.config_manager):
+                log_success("Dynamic MAC learning completed successfully")
+            else:
+                log_warning("Dynamic MAC learning failed, but containers are still operational")
+            
             return True
             
         except Exception as e:

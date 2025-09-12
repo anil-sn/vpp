@@ -227,7 +227,7 @@
       "testing_features": {
         "df_bit_testing": {
           "enabled": true,
-          "test_packet_sizes": [1400, 1450, 1500],
+          "test_packet_sizes": [1500, 4450, 4500],
           "df_bit_variations": [true, false]
         },
         "performance_testing": {

@@ -2,11 +2,38 @@
 """
 VPP Multi-Container Chain Management System
 
-This is the main entry point for managing VPP multi-container chains.
-It provides a unified interface for setup, testing, debugging, and cleanup operations.
+This is the main entry point for managing VPP multi-container processing chains.
+It provides a comprehensive command-line interface for all aspects of the system
+including setup, testing, debugging, monitoring, and cleanup operations.
+
+Key Features:
+- Automated container lifecycle management with proper dependency ordering
+- Integration with dynamic MAC learning for seamless L3 forwarding
+- Comprehensive testing suite with traffic generation and analysis
+- Real-time debugging and monitoring capabilities
+- Graceful cleanup and environment reset functionality
+
+Architecture Overview:
+The system implements a 3-container VPP processing chain:
+1. VXLAN-PROCESSOR: VXLAN decapsulation with BVI L2-to-L3 conversion
+2. SECURITY-PROCESSOR: Consolidated NAT44 + IPsec ESP + IP fragmentation
+3. DESTINATION: IPsec decryption and TAP interface packet capture
+
+The main entry point orchestrates these components through the VPPChainManager
+which coordinates container management, network configuration, traffic testing,
+and dynamic MAC learning to ensure reliable end-to-end packet processing.
+
+Usage Examples:
+  sudo python3 main.py setup                    # Setup complete environment
+  sudo python3 main.py setup --force            # Force rebuild and setup  
+  sudo python3 main.py test --type traffic      # Test traffic processing
+  sudo python3 main.py debug destination "show interface"  # Debug container
+  python3 main.py status                         # Show system status
+  sudo python3 main.py cleanup                  # Clean up environment
 
 Author: Claude Code
-Version: 1.0.0
+Version: 2.0 (Enhanced with dynamic MAC learning and comprehensive testing)
+Last Updated: 2025-09-12
 """
 
 import sys

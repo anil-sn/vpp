@@ -33,22 +33,24 @@ class TrafficGenerator:
         # Get network configuration
         networks = self.config_manager.get_networks()
         
-        # Get VXLAN processor container IP from external-traffic network
+        # Get VXLAN processor container IP from external-traffic network (or equivalent)
         vxlan_container = containers["vxlan-processor"]
         for interface in vxlan_container["interfaces"]:
-            if interface["network"] == "external-traffic":
+            # Check for standard external-traffic network or AWS production equivalent
+            if interface["network"] in ["external-traffic", "aws-mirror-ingress"]:
                 self.CONFIG["vxlan_ip"] = interface["ip"]["address"]
                 # Also get the network gateway as source IP for traffic generation
                 for network in networks:
-                    if network["name"] == "external-traffic":
+                    if network["name"] == interface["network"]:
                         self.CONFIG["vxlan_src_ip"] = network["gateway"]
                         break
                 break
         
-        # Get destination container IP from processing-destination network
+        # Get destination container IP from processing-destination network (or equivalent)
         destination_container = containers["destination"]
         for interface in destination_container["interfaces"]:
-            if interface["network"] == "processing-destination":
+            # Check for standard processing-destination network or AWS production equivalent
+            if interface["network"] in ["processing-destination", "aws-gcp-transit"]:
                 self.CONFIG["destination_ip"] = interface["ip"]["address"]
                 break
         

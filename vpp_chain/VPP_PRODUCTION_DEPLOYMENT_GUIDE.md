@@ -5,14 +5,14 @@
 This document provides a comprehensive step-by-step deployment process for the VPP Multi-Container Chain solution in a production AWS-GCP environment with the following infrastructure:
 
 - **AWS Public IP**: 34.212.132.203
-- **GCP Public IP**: 34.212.132.20
+- **GCP Public IP**: 34.134.82.101
 - **NAT IP**: 44.238.178.247
 
 ## Architecture Overview
 
 ### Deployment Architecture
 ```
-AWS Traffic Mirroring → [AWS EC2: 34.212.132.203] → VPN/Internet → [GCP VM: 34.212.132.20] → GCP FDI
+AWS Traffic Mirroring → [AWS EC2: 34.212.132.203] → VPN/Internet → [GCP VM: 34.134.82.101] → GCP FDI
                               ↓                                           ↓
                       VPP Multi-Container Chain               VPP Multi-Container Chain
                       (Mirror Target Processing)               (Final Processing & FDI)
@@ -30,7 +30,7 @@ VXLAN-PROCESSOR → SECURITY-PROCESSOR → DESTINATION → FDI Service
 
 ### Infrastructure Requirements
 - **AWS EC2 Instance**: c5n.2xlarge or larger (34.212.132.203)
-- **GCP VM Instance**: n2-highmem-4 or larger (34.212.132.20)
+- **GCP VM Instance**: n2-highmem-4 or larger (34.134.82.101)
 - **Network Connectivity**: Secure connection between AWS and GCP (VPN/Direct Connect)
 - **Root Access**: Required on both instances
 - **Ports**: 4789 (VXLAN), 2055 (NetFlow/sFlow), 8081 (FDI)
@@ -202,7 +202,7 @@ cat > config_aws_production.json << 'EOF'
             },
             "tunnel": {
               "src": "172.20.101.20",
-              "dst": "34.212.132.20",
+              "dst": "34.134.82.101",
               "local_ip": "10.100.100.1/30",
               "remote_ip": "10.100.100.2/30"
             }
@@ -213,7 +213,7 @@ cat > config_aws_production.json << 'EOF'
           },
           "routes": [
             {
-              "to": "34.212.132.20/32",
+              "to": "34.134.82.101/32",
               "via": "172.20.102.1",
               "interface": "eth1"
             },
@@ -291,7 +291,7 @@ log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1"; }
 # Get VPP container IP for VXLAN traffic
 VPP_CONTAINER_IP=$(docker inspect vxlan-processor | jq -r '.[0].NetworkSettings.Networks | to_entries | .[0].value.IPAddress')
 AWS_PUBLIC_IP="34.212.132.203"
-GCP_PUBLIC_IP="34.212.132.20"
+GCP_PUBLIC_IP="34.134.82.101"
 
 log_info "Configuring AWS traffic redirection to VPP container: $VPP_CONTAINER_IP"
 
@@ -326,13 +326,13 @@ chmod +x aws_traffic_redirection.sh
 sudo ./aws_traffic_redirection.sh
 ```
 
-## Phase 2: GCP Infrastructure Setup (34.212.132.20)
+## Phase 2: GCP Infrastructure Setup (34.134.82.101)
 
 ### Step 2.1: Prepare GCP Environment
 
 ```bash
 # Connect to GCP instance
-ssh your-username@34.212.132.20
+ssh your-username@34.134.82.101
 
 # Update system
 sudo apt update && sudo apt upgrade -y
@@ -353,7 +353,7 @@ exit
 
 ```bash
 # Reconnect to GCP instance
-ssh your-username@34.212.132.20
+ssh your-username@34.134.82.101
 
 # Clone the VPP repository
 git clone <repository-url> vpp_chain
@@ -470,7 +470,7 @@ cat > config_gcp_production.json << 'EOF'
               "crypto_key": "PRODUCTION_KEY_GCP_EGRESS_32CHAR"
             },
             "tunnel": {
-              "src": "34.212.132.20",
+              "src": "34.134.82.101",
               "dst": "34.212.132.203",
               "local_ip": "10.100.100.2/30",
               "remote_ip": "10.100.100.1/30"
@@ -578,7 +578,7 @@ log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1"; }
 # Configuration
 VPP_CONTAINER_IP=$(docker inspect vxlan-processor | jq -r '.[0].NetworkSettings.Networks | to_entries | .[0].value.IPAddress')
 AWS_PUBLIC_IP="34.212.132.203"
-GCP_PUBLIC_IP="34.212.132.20"
+GCP_PUBLIC_IP="34.134.82.101"
 NAT_IP="44.238.178.247"
 FDI_SERVICE_IP="10.0.4.100"
 FDI_SERVICE_PORT="8081"
@@ -731,7 +731,7 @@ log_info() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1"; }
 log_success() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"; }
 log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1"; }
 
-GCP_PUBLIC_IP="34.212.132.20"
+GCP_PUBLIC_IP="34.134.82.101"
 AWS_PUBLIC_IP="34.212.132.203"
 
 log_info "=== AWS End-to-End Testing ==="
@@ -806,7 +806,7 @@ chmod +x aws_e2e_test.sh
 ./aws_e2e_test.sh
 ```
 
-**On GCP Instance (34.212.132.20):**
+**On GCP Instance (34.134.82.101):**
 
 ```bash
 # Create comprehensive GCP testing
@@ -819,7 +819,7 @@ log_success() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1"; }
 log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1"; }
 
 AWS_PUBLIC_IP="34.212.132.203"
-GCP_PUBLIC_IP="34.212.132.20"
+GCP_PUBLIC_IP="34.134.82.101"
 
 log_info "=== GCP End-to-End Testing ==="
 
@@ -925,7 +925,7 @@ done
 # Network connectivity check
 if [ "$HOSTNAME" = "aws-instance" ]; then
     # AWS-specific monitoring
-    if ping -c 1 34.212.132.20 >/dev/null 2>&1; then
+    if ping -c 1 34.134.82.101 >/dev/null 2>&1; then
         log_with_timestamp "INFO: AWS → GCP connectivity OK"
     else
         log_with_timestamp "WARNING: AWS → GCP connectivity FAILED"
@@ -1052,7 +1052,7 @@ chmod +x /usr/local/bin/vpp_emergency_rollback.sh
 - [ ] Interface statistics showing packet flow
 - [ ] Monitoring script operational
 
-### GCP Instance (34.212.132.20) Validation
+### GCP Instance (34.134.82.101) Validation
 - [ ] VPP containers running and healthy
 - [ ] Traffic being received from AWS
 - [ ] IPsec decryption successful

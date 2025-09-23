@@ -268,9 +268,12 @@ cat > config_aws_production.json << 'EOF'
 }
 EOF
 
+# Replace the default config.json with our AWS production config
+cp config_aws_production.json config.json
+
 # Deploy AWS VPP Chain
 sudo python3 src/main.py cleanup
-sudo python3 src/main.py setup --config config_aws_production.json --force
+sudo python3 src/main.py setup --force
 
 # Verify AWS deployment
 python3 src/main.py status
@@ -555,9 +558,12 @@ cat > config_gcp_production.json << 'EOF'
 }
 EOF
 
+# Replace the default config.json with our GCP production config
+cp config_gcp_production.json config.json
+
 # Deploy GCP VPP Chain
 sudo python3 src/main.py cleanup
-sudo python3 src/main.py setup --config config_gcp_production.json --force
+sudo python3 src/main.py setup --force
 
 # Verify GCP deployment
 python3 src/main.py status

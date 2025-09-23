@@ -1,6 +1,6 @@
 {
   "default_mode": "aws_production",
-  "description": "AWS production configuration for traffic mirror processing - conflict-free IPs",
+  "description": "AWS production configuration for traffic mirror processing - Ready for 34.212.132.203",
   "modes": {
     "aws_production": {
       "description": "AWS Mirror Target processing for GCP forwarding",

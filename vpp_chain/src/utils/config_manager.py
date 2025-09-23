@@ -17,7 +17,10 @@ class ConfigManager:
         self.project_root = Path(__file__).parent.parent.parent
         self.config_path = self.project_root / config_file
         self._load_config()
-        self._current_mode = mode if mode else self.config.get("default_mode", "gcp")
+        self._current_mode = mode if mode else self.config.get("default_mode", "aws_production")
+        if self._current_mode not in self.config["modes"]:
+            available_modes = list(self.config["modes"].keys())
+            raise ValueError(f"Mode '{self._current_mode}' not found. Available modes: {available_modes}")
         self.current_config = self.config["modes"][self._current_mode]
 
     def _load_config(self):

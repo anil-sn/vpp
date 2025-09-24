@@ -179,53 +179,55 @@ class VPPChainManager:
         containers = self.config_manager.get_containers()
         traffic_config = self.config_manager.get_traffic_config()
         
-        # Get VXLAN processor IP
-        vxlan_ip = "N/A"
-        for interface in containers["vxlan-processor"]["interfaces"]:
-            if interface["network"] == "external-traffic":
-                vxlan_ip = interface["ip"]["address"]
-                break
+        print("\nVPP Chain Topology:")
         
-        # Get NAT mapping from config
-        nat_config = containers["security-processor"]["nat44"]["static_mapping"]
-        nat_local = nat_config["local_ip"]
-        nat_external = nat_config["external_ip"]
+        # --- START OF FIX ---
+        # This version is defensive and only prints info for containers that exist in the config.
         
-        # Get destination IP and TAP info from config
-        destination_ip = "N/A"
-        tap_ip = "N/A"
-        for interface in containers["destination"]["interfaces"]:
-            if interface["network"] == "processing-destination":
-                destination_ip = interface["ip"]["address"]
-                break
+        # VXLAN Processor Details (if it exists)
+        if "vxlan-processor" in containers:
+            vxlan_ip = "N/A"
+            vxlan_vni = traffic_config.get("vxlan_vni", "N/A")
+            for interface in containers["vxlan-processor"]["interfaces"]:
+                if interface["network"] in ["external-traffic", "aws-mirror-ingress"]:
+                    vxlan_ip = interface["ip"]["address"]
+                    break
+            print("┌─────────────┐    ┌─────────────────────────────────────┐    ┌─────────────┐")
+            print("│VXLAN-PROC   │───▶│        SECURITY-PROCESSOR           │───▶│DESTINATION  │")
+            print(f"│ {vxlan_ip:>11}│    │┌─────────┬─────────┬─────────────┐   │")
+        else:
+            # Simplified diagram for GCP mode
+            print("┌─────────────────────────────────────┐    ┌─────────────┐")
+            print("│        SECURITY-PROCESSOR           │───▶│DESTINATION  │")
+            print("│┌─────────┬─────────┬─────────────┐   │")
+
+        # Security Processor Details (if it exists)
+        if "security-processor" in containers:
+            nat_local = containers["security-processor"].get("nat44", {}).get("static_mapping", {}).get("local_ip", "N/A")
+            nat_external = containers["security-processor"].get("nat44", {}).get("static_mapping", {}).get("external_ip", "N/A")
+            fragment_mtu = containers["security-processor"].get("fragmentation", {}).get("mtu", "N/A")
+            print(f"││  NAT44  │ IPsec   │Fragmentation│   │")
+            print(f"││{nat_local:<9}│AES-GCM  │  MTU {fragment_mtu:<4}   │   │")
+            print(f"││→{nat_external:<8}││ -128    │ IP Fragments│   │")
         
-        if "tap_interface" in containers["destination"]:
-            tap_ip = containers["destination"]["tap_interface"]["ip"].split('/')[0]
-        
-        # Get fragmentation MTU from config
-        fragment_mtu = containers["security-processor"]["fragmentation"]["mtu"]
-        
-        # Get VXLAN VNI from config
-        vxlan_vni = traffic_config["vxlan_vni"]
-        
-        print("\nVPP 3-Container Chain Topology (50% Resource Reduction):")
-        print("┌─────────────┐    ┌─────────────────────────────────────┐    ┌─────────────┐")
-        print("│VXLAN-PROC   │───▶│        SECURITY-PROCESSOR           │───▶│DESTINATION  │")
-        print(f"│ {vxlan_ip:>11}│    │┌─────────┬─────────┬─────────────┐   │    │{destination_ip}  │")
-        print(f"│ Receives    │    ││  NAT44  │ IPsec   │Fragmentation│   │    │ TAP Bridge  │")
-        print(f"│VXLAN VNI {vxlan_vni:<3}│    ││{nat_local:<9}│AES-GCM  │  MTU {fragment_mtu:<4}   │   │    │  {tap_ip}   │")
-        print(f"│ Decap L2    │    ││→{nat_external:<8}││ -128    │ IP Fragments│   │    │  Captures   │")
-        print("│             │    │└─────────┴─────────┴─────────────┘   │    │Final Packets│")
-        print("└─────────────┘    └─────────────────────────────────────┘    └─────────────┘")
-        print("        ▲                              │                                │")
-        print("        │                       Consolidated                      TAP Interface")
-        print("        │                      Security Functions                 Packet Capture")
-        print("        │")
-        print("┌─────────────┐")
-        print("│   Traffic   │")
-        print("│ Generator   │")
-        print("│  (Python)   │")
-        print("└─────────────┘")
+        # Destination Details (if it exists)
+        if "destination" in containers:
+            destination_ip = "N/A"
+            tap_ip = "N/A"
+            for interface in containers["destination"]["interfaces"]:
+                if interface["network"] in ["processing-destination", "aws-gcp-transit", "gcp-internal-net"]:
+                    destination_ip = interface["ip"]["address"]
+                    break
+            if "tap_interface" in containers["destination"]:
+                tap_ip = containers["destination"]["tap_interface"]["ip"].split('/')[0]
+            
+            if "vxlan-processor" in containers:
+                print(f"│             │    │└─────────┴─────────┴─────────────┘   │    │{destination_ip}  │")
+                print(f"└─────────────┘    └─────────────────────────────────────┘    └─────────────┘")
+            else:
+                print(f"└─────────┴─────────┴─────────────┘   │    │{destination_ip}  │")
+                print(f"                                      └─────────────┘")
+        # --- END OF FIX ---
         print()
 
 def main():

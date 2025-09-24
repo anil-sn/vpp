@@ -244,68 +244,64 @@ class DynamicMACLearner:
         """
         log_info("Starting dynamic MAC learning for all container connections...")
         
-        # Step 1: Wait for all VPP containers to be ready and responsive
-        # This is critical because VPP needs to be fully initialized before MAC discovery
-        log_info("Waiting for all VPP containers to be ready...")
-        for container in ["vxlan-processor", "security-processor", "destination"]:
+        # --- START OF FIX ---
+        # Get the list of containers dynamically from the current configuration
+        containers_in_this_mode = self.containers.keys()
+        
+        log_info(f"Waiting for VPP containers in this mode to be ready: {list(containers_in_this_mode)}")
+        for container_name in containers_in_this_mode:
             wait_count = 0
-            max_wait = 30  # 30 seconds timeout per container
+            max_wait = 30
             while wait_count < max_wait:
                 try:
-                    # Use 'show version' as a lightweight VPP health check
                     result = subprocess.run(
-                        f'docker exec {container} vppctl show version'.split(),
+                        f'docker exec {container_name} vppctl show version'.split(),
                         capture_output=True, text=True, timeout=5
                     )
                     if result.returncode == 0:
-                        log_success(f"{container} VPP is ready")
+                        log_success(f"{container_name} VPP is ready")
                         break
                 except:
-                    # Ignore exceptions during startup phase
                     pass
                 
                 time.sleep(1)
                 wait_count += 1
                 if wait_count >= max_wait:
-                    log_error(f"{container} VPP not ready after {max_wait} seconds")
+                    log_error(f"{container_name} VPP not ready after {max_wait} seconds")
                     return False
+        # --- END OF FIX ---
         
         success = True
         
         # Step 2: Learn MAC addresses and update neighbor tables for each connection
         
-        # Connection 1: VXLAN processor -> Security processor
-        # This connection handles VXLAN decapsulated packets forwarded to NAT44/IPsec processing
-        log_info("Learning MAC: vxlan-processor -> security-processor")
-        security_mac = self.discover_vpp_interface_mac("security-processor", "host-eth0")
-        if security_mac:
-            # Update vxlan-processor's neighbor table to reach security-processor at 172.20.101.20
-            if not self.update_neighbor_table("vxlan-processor", "172.20.101.20", security_mac, "host-eth1"):
+        # --- START OF FIX ---
+        # Conditionally learn MACs only if the required containers exist in this mode
+        if "vxlan-processor" in containers_in_this_mode and "security-processor" in containers_in_this_mode:
+            log_info("Learning MAC: vxlan-processor -> security-processor")
+            security_mac = self.discover_vpp_interface_mac("security-processor", "host-eth0")
+            if security_mac:
+                if not self.update_neighbor_table("vxlan-processor", "172.20.101.20", security_mac, "host-eth1"):
+                    success = False
+            else:
+                log_error("Failed to discover security-processor MAC")
                 success = False
-        else:
-            log_error("Failed to discover security-processor MAC")
-            success = False
-        
-        # Connection 2: Security processor -> Destination (MOST CRITICAL)
-        # This connection handles encrypted IPsec packets forwarded to final destination
-        # Failure here results in complete packet loss and 0% delivery rate
-        log_info("Learning MAC: security-processor -> destination")  
-        destination_mac = self.discover_vpp_interface_mac("destination", "host-eth0")
-        if destination_mac:
-            # Update security-processor's neighbor table to reach destination at 172.20.102.20
-            # This is the most critical update - without it, encrypted packets are dropped
-            if not self.update_neighbor_table("security-processor", "172.20.102.20", destination_mac, "host-eth1"):
+
+        if "security-processor" in containers_in_this_mode and "destination" in containers_in_this_mode:
+            log_info("Learning MAC: security-processor -> destination")  
+            destination_mac = self.discover_vpp_interface_mac("destination", "host-eth0")
+            if destination_mac:
+                if not self.update_neighbor_table("security-processor", "172.20.102.20", destination_mac, "host-eth1"):
+                    success = False
+            else:
+                log_error("Failed to discover destination MAC")
                 success = False
-        else:
-            log_error("Failed to discover destination MAC")
-            success = False
-        
-        # Step 3: Verify all neighbor tables and display results for debugging
+        # --- END OF FIX ---
+
         log_info("Verifying updated neighbor tables...")
-        for container in ["vxlan-processor", "security-processor", "destination"]:
-            self.verify_neighbor_table(container)
+        for container_name in containers_in_this_mode:
+            self.verify_neighbor_table(container_name)
         
-        # Step 4: Return overall success status
         if success:
             log_success("Dynamic MAC learning completed successfully!")
             return True

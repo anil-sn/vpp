@@ -1,0 +1,214 @@
+{
+  "default_mode": "aws_production_custom",
+  "description": "Custom AWS production configuration for your environment",
+  "modes": {
+    "aws_production_custom": {
+      "description": "AWS Mirror Target processing for GCP forwarding - Custom for your environment",
+      "networks": [
+        {
+          "name": "aws-mirror-ingress",
+          "subnet": "172.20.100.0/24",
+          "gateway": "172.20.100.1",
+          "description": "VXLAN ingress from ens5 bridge integration",
+          "mtu": 9000,
+          "host_integration": {
+            "interface": "ens5",
+            "existing_ip": "172.30.82.115/23",
+            "bridge_mode": true
+          }
+        },
+        {
+          "name": "aws-processing-internal",
+          "subnet": "172.20.101.0/24",
+          "gateway": "172.20.101.1",
+          "description": "Internal processing between VXLAN and Security processor",
+          "mtu": 9000
+        },
+        {
+          "name": "aws-gcp-transit",
+          "subnet": "172.20.102.0/24",
+          "gateway": "172.20.102.1",
+          "description": "AWS to GCP transit via VPN/Internet"
+        }
+      ],
+      "containers": {
+        "vxlan-processor": {
+          "description": "VXLAN decapsulation with BVI L2-to-L3 conversion",
+          "dockerfile": "src/containers/Dockerfile.vxlan",
+          "config_script": "src/containers/vxlan-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "aws-mirror-ingress",
+              "ip": {
+                "address": "172.20.100.10",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1",
+              "network": "aws-processing-internal",
+              "ip": {
+                "address": "172.20.101.10",
+                "mask": 24
+              }
+            }
+          ],
+          "vxlan_tunnel": {
+            "src": "172.20.100.10",
+            "dst": "172.20.100.1",
+            "vni": 1,
+            "decap_next": "l2"
+          },
+          "routes": [
+            {
+              "to": "34.28.95.0/24",
+              "via": "172.20.101.20",
+              "interface": "eth1"
+            },
+            {
+              "to": "172.30.74.0/24",
+              "via": "172.20.101.20",
+              "interface": "eth1"
+            },
+            {
+              "to": "172.20.102.0/24",
+              "via": "172.20.101.20",
+              "interface": "eth1"
+            }
+          ],
+          "bvi": {
+            "ip": "192.168.201.1/24"
+          }
+        },
+        "security-processor": {
+          "description": "NAT44 + IPsec encryption for AWS-GCP transit",
+          "dockerfile": "src/containers/Dockerfile.security",
+          "config_script": "src/containers/security-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "aws-processing-internal",
+              "ip": {
+                "address": "172.20.101.20",
+                "mask": 24
+              }
+            },
+            {
+              "name": "eth1",
+              "network": "aws-gcp-transit",
+              "ip": {
+                "address": "172.20.102.10",
+                "mask": 24
+              },
+              "mtu": 1400
+            }
+          ],
+          "nat44": {
+            "sessions": 4096,
+            "static_mapping": {
+              "local_ip": "172.30.74.144",
+              "local_port": 31765,
+              "external_ip": "172.20.102.10",
+              "external_port": 31765
+            },
+            "inside_interface": "eth0",
+            "outside_interface": "eth1"
+          },
+          "ipsec": {
+            "sa_in": {
+              "id": 2000,
+              "spi": 2000,
+              "crypto_alg": "aes-gcm-128",
+              "crypto_key": "a1b2c3d4e5f6789012345678abcdef01"
+            },
+            "sa_out": {
+              "id": 1000,
+              "spi": 1000,
+              "crypto_alg": "aes-gcm-128",
+              "crypto_key": "fedcba9876543210abcdef0123456789"
+            },
+            "tunnel": {
+              "src": "172.20.101.20",
+              "dst": "34.134.82.101",
+              "local_ip": "10.100.100.1/30",
+              "remote_ip": "10.100.100.2/30"
+            }
+          },
+          "fragmentation": {
+            "mtu": 1400,
+            "enable": true
+          },
+          "routes": [
+            {
+              "to": "34.134.82.101/32",
+              "via": "172.20.102.1",
+              "interface": "eth1"
+            }
+          ]
+        },
+        "destination": {
+          "description": "AWS local destination for processed traffic",
+          "dockerfile": "src/containers/Dockerfile.destination",
+          "config_script": "src/containers/destination-config.sh",
+          "interfaces": [
+            {
+              "name": "eth0",
+              "network": "aws-gcp-transit",
+              "ip": {
+                "address": "172.20.102.20",
+                "mask": 24
+              }
+            }
+          ],
+          "tap_interface": {
+            "id": 0,
+            "name": "vpp-tap0",
+            "ip": "10.0.3.1/24",
+            "linux_ip": "10.0.3.2/24",
+            "pcap_file": "/tmp/aws-processed.pcap",
+            "rx_mode": "interrupt"
+          },
+          "routes": [
+            {
+              "to": "0.0.0.0/0",
+              "via": "172.20.102.1"
+            },
+            {
+              "to": "10.0.3.0/24",
+              "via": "tap0"
+            }
+          ]
+        }
+      },
+      "connectivity_tests": [
+        {
+          "from": "vxlan-processor",
+          "to": "172.20.101.20",
+          "description": "VXLAN → Security Processor"
+        },
+        {
+          "from": "security-processor",
+          "to": "172.20.102.20",
+          "description": "Security Processor → Destination"
+        }
+      ],
+      "traffic_config": {
+        "vxlan_port": 4789,
+        "vxlan_vni": 1,
+        "inner_src_ip": "34.28.95.22",
+        "inner_dst_ip": "172.30.74.144",
+        "inner_dst_port": 31765,
+        "packet_count": 100,
+        "packet_size": 1464,
+        "test_duration": 30,
+        "expected_transformations": [
+          "VXLAN decapsulation (vxlan-processor)",
+          "NAT44 translation (security-processor)",
+          "IPsec encryption (security-processor)",
+          "IP fragmentation (security-processor)"
+        ]
+      }
+    }
+  }
+}
